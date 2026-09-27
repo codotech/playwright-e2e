@@ -1,11 +1,7 @@
 name: Merge E2E Evidence
-description: Validate all shard evidence, merge reports, publish evidence, and fail closed.
+description: Validate shard evidence and merge reports inside the immutable E2E runner image.
 
 inputs:
-  working-directory:
-    description: Repository-relative directory containing the installed Playwright package.
-    required: false
-    default: e2e
   download-directory:
     description: Repository-relative directory containing downloaded shard artifacts.
     required: false
@@ -17,37 +13,29 @@ inputs:
   expected-shards:
     description: Number of shard status files and report sets required.
     required: true
-  artifact-name:
-    description: Name of the durable merged evidence artifact.
-    required: false
-    default: e2e-evidence
-  retention-days:
-    description: Number of days GitHub retains the merged evidence artifact.
-    required: false
-    default: "10"
+  runner-image-id:
+    description: Content-addressed Docker image ID used to merge Playwright reports.
+    required: true
 
 outputs:
   verdict:
     description: "Authoritative verdict: passed, failed, or infrastructure-error."
-    value: ${{ steps.evaluate.outputs.verdict }}
-  artifact-name:
-    description: Merged evidence artifact name.
-    value: ${{ inputs.artifact-name }}
+    value: ${{ steps.assemble.outputs.verdict }}
   total:
     description: Aggregated test count.
-    value: ${{ steps.evaluate.outputs.total }}
+    value: ${{ steps.assemble.outputs.total }}
   passed:
     description: Aggregated passed test count.
-    value: ${{ steps.evaluate.outputs.passed }}
+    value: ${{ steps.assemble.outputs.passed }}
   failed:
     description: Aggregated failed test count.
-    value: ${{ steps.evaluate.outputs.failed }}
+    value: ${{ steps.assemble.outputs.failed }}
   skipped:
     description: Aggregated skipped test count.
-    value: ${{ steps.evaluate.outputs.skipped }}
+    value: ${{ steps.assemble.outputs.skipped }}
   verdict-file:
     description: Absolute path to verdict.json.
-    value: ${{ steps.evaluate.outputs.verdict-file }}
+    value: ${{ steps.assemble.outputs.verdict-file }}
 
 runs:
   using: composite
@@ -56,7 +44,6 @@ runs:
       id: stage
       shell: bash
       env:
-        E2E_WORKING_DIRECTORY: ${{ inputs.working-directory }}
         E2E_DOWNLOAD_DIRECTORY: ${{ inputs.download-directory }}
         E2E_EVIDENCE_DIRECTORY: ${{ inputs.evidence-directory }}
         E2E_EXPECTED_SHARDS: ${{ inputs.expected-shards }}
@@ -64,7 +51,6 @@ runs:
         set -euo pipefail
         node "$GITHUB_ACTION_PATH/stage-evidence.mjs" \
           "$GITHUB_WORKSPACE" \
-          "$E2E_WORKING_DIRECTORY" \
           "$E2E_DOWNLOAD_DIRECTORY" \
           "$E2E_EVIDENCE_DIRECTORY" \
           "$E2E_EXPECTED_SHARDS" \
@@ -72,15 +58,13 @@ runs:
 
     - name: Merge Playwright blob reports
       id: merge-html
-      if: always()
       continue-on-error: true
       shell: bash
       env:
         E2E_CAN_MERGE: ${{ steps.stage.outputs.can-merge }}
-        E2E_WORKING_DIRECTORY: ${{ steps.stage.outputs.working-directory }}
         E2E_BLOB_DIRECTORY: ${{ steps.stage.outputs.blob-directory }}
         PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ steps.stage.outputs.html-directory }}
-        PLAYWRIGHT_HTML_OPEN: never
+        E2E_RUNNER_IMAGE_ID: ${{ inputs.runner-image-id }}
       run: |
         set +e
         exit_code=0
@@ -88,11 +72,28 @@ runs:
         if [[ "$E2E_CAN_MERGE" != "true" ]]; then
           echo "Blob report merge cannot run because shard evidence is incomplete."
           exit_code=42
+        elif [[ ! "$E2E_RUNNER_IMAGE_ID" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+          echo "Blob report merge cannot run because the runner image ID is invalid."
+          exit_code=42
         else
-          (
-            cd "$E2E_WORKING_DIRECTORY"
-            pnpm exec playwright merge-reports --reporter html "$E2E_BLOB_DIRECTORY"
-          )
+          docker run --rm \
+            --init \
+            --read-only \
+            --network none \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --pids-limit 256 \
+            --tmpfs /tmp:rw,nosuid,nodev,noexec,size=256m \
+            --user "$(id -u):$(id -g)" \
+            --env CI=true \
+            --env HOME=/tmp \
+            --env PLAYWRIGHT_HTML_OUTPUT_DIR=/merge-output \
+            --env PLAYWRIGHT_HTML_OPEN=never \
+            --volume "$E2E_BLOB_DIRECTORY:/merge-input/blob-report" \
+            --volume "$PLAYWRIGHT_HTML_OUTPUT_DIR:/merge-output" \
+            --entrypoint /workspace/e2e/node_modules/.bin/playwright \
+            "$E2E_RUNNER_IMAGE_ID" \
+            merge-reports --reporter html /merge-input/blob-report
           exit_code=$?
         fi
 
@@ -101,7 +102,7 @@ runs:
 
     - name: Assemble deterministic evidence
       id: assemble
-      if: always()
+      if: always() && steps.stage.outcome == 'success'
       shell: bash
       env:
         E2E_EVIDENCE_DIRECTORY: ${{ steps.stage.outputs.evidence-directory }}
@@ -112,34 +113,5 @@ runs:
         node "$GITHUB_ACTION_PATH/assemble-evidence.mjs" \
           "$E2E_EVIDENCE_DIRECTORY" \
           "$E2E_EXPECTED_SHARDS" \
-          "${E2E_HTML_MERGE_EXIT_CODE:-99}"
-
-    - name: Upload merged E2E evidence
-      id: publish
-      if: always()
-      continue-on-error: true
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-      with:
-        name: ${{ inputs.artifact-name }}
-        path: ${{ steps.stage.outputs.evidence-directory }}/
-        if-no-files-found: error
-        retention-days: ${{ inputs.retention-days }}
-
-    - name: Publish summary and enforce verdict
-      id: evaluate
-      if: always()
-      shell: bash
-      env:
-        E2E_EVIDENCE_DIRECTORY: ${{ steps.stage.outputs.evidence-directory }}
-        E2E_EXPECTED_SHARDS: ${{ inputs.expected-shards }}
-        E2E_ARTIFACT_NAME: ${{ inputs.artifact-name }}
-        E2E_PUBLICATION_OUTCOME: ${{ steps.publish.outcome }}
-      run: |
-        set -euo pipefail
-        node "$GITHUB_ACTION_PATH/evaluate-verdict.mjs" \
-          "$E2E_EVIDENCE_DIRECTORY" \
-          "$E2E_EXPECTED_SHARDS" \
-          "$E2E_ARTIFACT_NAME" \
-          "${E2E_PUBLICATION_OUTCOME:-failure}" \
-          "$GITHUB_STEP_SUMMARY" \
+          "${E2E_HTML_MERGE_EXIT_CODE:-99}" \
           "$GITHUB_OUTPUT"

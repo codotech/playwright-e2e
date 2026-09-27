@@ -7,18 +7,29 @@ This repository proves the contract with a root Docker Compose service. The serv
 ```text
 pull request / main / manual
               |
+      build runner image once
+              |
+       portable runner archive
+              |
        +------+------+
        |             |
     shard 1        shard 2
- compose up      compose up
- Playwright      Playwright
- logs + down     logs + down
+ load runner     load runner
+ compose SUT     compose SUT
+ run tests       run tests
+ evidence        evidence
        |             |
        +------+------+
               |
        merge evidence
               |
+      package report image
+              |
+       portable report archive
+              |
           E2E Gate
+              |
+      sticky PR confidence report
 ```
 
 ## Run the example locally
@@ -68,7 +79,7 @@ jobs:
       shard-count: 2
 ```
 
-Replace the marker with the immutable SHA you adopt. The workflow needs no inherited secrets and does not write pull-request comments.
+Replace the marker with the immutable SHA you adopt. The workflow needs no inherited secrets. Pull-request comments use the explicitly granted permission shown above.
 
 | Input | Default | Purpose |
 | --- | --- | --- |
@@ -79,13 +90,11 @@ Replace the marker with the immutable SHA you adopt. The workflow needs no inher
 | `projects` | empty | Project names, one per line; empty selects all |
 | `labels` | empty | Tags beginning with `@`, one per line; empty selects all |
 | `label-match` | `all` | Require all listed labels or any listed label |
-| `node-version` | `22` | Node.js runtime |
-| `pnpm-version` | `10.26.2` | pnpm runtime |
 | `shard-count` | `2` | Parallel shards, from 1 through 32 |
 | `artifact-retention-days` | `10` | Evidence retention period |
 | `comment-on-pr` | `true` | Update one E2E report comment on same-repository pull requests |
 
-The outputs are `verdict`, `artifact-name`, `total`, `passed`, `failed`, and `skipped`.
+The workflow exposes the verdict, merged test totals, and the exact names and IDs of its portable images. The image outputs are listed below.
 
 ## Select projects and labels
 
@@ -160,7 +169,59 @@ e2e-evidence/
 +-- verdict.json
 ```
 
-`E2E Gate` fails for a failed or cancelled shard, unhealthy SUT lifecycle, missing evidence, report merge failure, artifact failure, or a non-passing verdict. Evidence publication cannot turn a failed run green.
+The same immutable runner image merges the shard blobs; pull-request dependencies are never installed directly on the GitHub host. `E2E Gate` fails for runner transport or identity problems, a failed or cancelled shard, unhealthy SUT lifecycle, missing evidence, report merge failure, report-image publication failure, evidence publication failure, or a non-passing verdict. Evidence publication cannot turn a failed run green.
+
+## Load the runner and report images
+
+A healthy run publishes two Docker archives in addition to the regular test evidence. If report packaging or publication fails, the report outputs are empty and the authoritative verdict is an infrastructure error.
+
+| Artifact | Archive inside it | Purpose |
+| --- | --- | --- |
+| `e2e-runner-image` | `playwright-e2e-runner.tar.zst` | Exact Playwright runner used by every shard |
+| `e2e-report-image` | `playwright-e2e-report.tar.zst` | Merged HTML report served on port 8080 |
+
+The workflow exposes these values:
+
+| Output | Meaning |
+| --- | --- |
+| `runner-image-name` | Commit-tagged runner image name |
+| `runner-image-id` | Content-addressed local runner image ID |
+| `runner-image-artifact` | Runner archive artifact name |
+| `report-image-name` | Run-tagged report image name; empty when unavailable |
+| `report-image-id` | Content-addressed local report image ID; empty when unavailable |
+| `report-image-artifact` | Report archive artifact name; empty when unavailable |
+
+After downloading the runner artifact, load it and run the exact test environment again. Replace the image variable with the corresponding workflow output:
+
+```bash
+docker load --input e2e-runner-image/playwright-e2e-runner.tar.zst
+mkdir -p e2e-output
+docker run --rm --init --ipc=host \
+  --read-only \
+  --tmpfs /tmp:rw,nosuid,nodev,size=512m \
+  --cap-drop=ALL \
+  --security-opt=no-new-privileges:true \
+  --pids-limit=1024 \
+  --user "$(id -u):$(id -g)" \
+  --add-host=host.docker.internal:host-gateway \
+  -e BASE_URL=http://host.docker.internal:4173 \
+  -e HOME=/tmp \
+  -v "$PWD/e2e-output:/evidence" \
+  "$RUNNER_IMAGE_ID"
+```
+
+Append normal Playwright arguments, such as `--project=chromium --grep=@smoke`, after the image name.
+
+Load and serve the merged report in the same way:
+
+```bash
+docker load --input e2e-report-image/playwright-e2e-report.tar.zst
+docker run --rm -p 8080:8080 "$REPORT_IMAGE_NAME"
+```
+
+Open `http://127.0.0.1:8080`. The report image contains the complete merged HTML directory. Retained Playwright traces and other report attachments remain available from the report when the test produced them.
+
+These images are currently GitHub artifacts, not registry publications. Download and `docker load` the archives before use; artifact retention still applies, and the run-tagged image names are not remotely pullable.
 
 For pull requests from the same repository, the workflow creates or updates one sticky `E2E confidence report` comment with the verdict, aggregate totals, active project and label filters, failure reason, and workflow evidence link. Grant `pull-requests: write` in the caller workflow, or set `comment-on-pr: false` when comments are not wanted. Comment publication is non-blocking and does not change the gate verdict.
 

@@ -3,6 +3,10 @@ import { dirname } from "node:path";
 
 const [
   statusFile,
+  runnerDownloadOutcome,
+  runnerLoadOutcome,
+  requestedRunnerExitCode,
+  actualRunnerImageId,
   requestedStartupExitCode,
   requestedPlaywrightExitCode,
   requestedPlaywrightFailureKind,
@@ -23,6 +27,10 @@ const startupExitCode = parseExitCode(
   requestedStartupExitCode,
   "startup",
 );
+const runnerExitCode = parseExitCode(
+  requestedRunnerExitCode,
+  "runner image verification",
+);
 const playwrightExitCode = parseExitCode(
   requestedPlaywrightExitCode,
   "Playwright",
@@ -38,20 +46,57 @@ const finishedAt = new Date();
 const startedAt = new Date(status.startedAt);
 
 const failures = [];
-if (startupExitCode === null) {
+const runnerTransportSucceeded =
+  runnerDownloadOutcome === "success" && runnerLoadOutcome === "success";
+if (runnerDownloadOutcome !== "success") {
+  failures.push({
+    kind: "infrastructure",
+    phase: "runner-image-download",
+    message: `E2E runner image download outcome was ${runnerDownloadOutcome}`,
+  });
+}
+if (runnerLoadOutcome !== "success") {
+  failures.push({
+    kind: "infrastructure",
+    phase: "runner-image-load",
+    message: `E2E runner image load outcome was ${runnerLoadOutcome}`,
+  });
+}
+if (runnerTransportSucceeded && runnerExitCode === null) {
+  failures.push({
+    kind: "infrastructure",
+    phase: "runner-image",
+    message: "E2E runner image verification did not report an exit code",
+  });
+} else if (runnerTransportSucceeded && runnerExitCode !== 0) {
+  failures.push({
+    kind: "infrastructure",
+    phase: "runner-image",
+    message: `E2E runner image verification exited with ${runnerExitCode}`,
+  });
+}
+if (
+  runnerTransportSucceeded &&
+  runnerExitCode === 0 &&
+  startupExitCode === null
+) {
   failures.push({
     kind: "infrastructure",
     phase: "sut-startup",
     message: "Dockerized SUT startup did not report an exit code",
   });
-} else if (startupExitCode !== 0) {
+} else if (
+  runnerTransportSucceeded &&
+  runnerExitCode === 0 &&
+  startupExitCode !== 0
+) {
   failures.push({
     kind: "infrastructure",
     phase: "sut-startup",
     message: `Dockerized SUT startup exited with ${startupExitCode}`,
   });
 }
-if (startupExitCode === 0 && playwrightExitCode === null) {
+if (runnerExitCode === 0 && startupExitCode === 0 && playwrightExitCode === null) {
   failures.push({
     kind: "infrastructure",
     phase: "playwright-execution",
@@ -60,12 +105,18 @@ if (startupExitCode === 0 && playwrightExitCode === null) {
 } else if (
   playwrightExitCode !== null &&
   playwrightExitCode > 0 &&
-  requestedPlaywrightFailureKind === "infrastructure"
+  requestedPlaywrightFailureKind !== "test"
 ) {
   failures.push({
     kind: "infrastructure",
-    phase: "playwright-selection",
-    message: `Playwright selection preparation exited with ${playwrightExitCode}`,
+    phase:
+      requestedPlaywrightFailureKind === "selection"
+        ? "playwright-selection"
+        : "runner-container",
+    message:
+      requestedPlaywrightFailureKind === "selection"
+        ? `Playwright selection preparation exited with ${playwrightExitCode}`
+        : `E2E runner container exited with ${playwrightExitCode}`,
   });
 } else if (playwrightExitCode !== null && playwrightExitCode > 0) {
   failures.push({
@@ -115,18 +166,28 @@ status.result = testFailure
     ? "infrastructure-error"
     : "passed";
 
-const effectiveExitCode = !status.primaryFailure
-  ? 0
-  : status.primaryFailure.phase === "playwright"
-    ? (playwrightExitCode ?? 1)
-    : startupExitCode !== null && startupExitCode !== 0
-      ? startupExitCode
-      : logExitCode !== null && logExitCode !== 0
-        ? logExitCode
-        : teardownExitCode !== null && teardownExitCode !== 0
-          ? teardownExitCode
-          : 1;
+const exitCodeForFailure = (failure) => {
+  switch (failure?.phase) {
+    case "playwright":
+    case "playwright-selection":
+    case "runner-container":
+      return playwrightExitCode ?? 1;
+    case "runner-image":
+      return runnerExitCode ?? 1;
+    case "sut-startup":
+      return startupExitCode ?? 1;
+    case "evidence":
+      return logExitCode ?? 1;
+    case "cleanup":
+      return teardownExitCode ?? 1;
+    default:
+      return failure ? 1 : 0;
+  }
+};
+const effectiveExitCode = exitCodeForFailure(status.primaryFailure);
 status.exitCode = effectiveExitCode;
+status.lifecycle.runner.verificationExitCode = runnerExitCode;
+status.lifecycle.runner.actualImageId = actualRunnerImageId || null;
 status.lifecycle.sut.startupExitCode = startupExitCode;
 status.lifecycle.playwright = {
   exitCode: playwrightExitCode,

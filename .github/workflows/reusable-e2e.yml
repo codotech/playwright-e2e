@@ -8,16 +8,6 @@ on:
         required: false
         default: e2e
         type: string
-      node-version:
-        description: Node.js version used by the E2E package.
-        required: false
-        default: "22"
-        type: string
-      pnpm-version:
-        description: pnpm version used to install the E2E package.
-        required: false
-        default: 10.26.2
-        type: string
       playwright-config:
         description: Playwright configuration path, relative to the working directory.
         required: false
@@ -64,6 +54,24 @@ on:
         default: true
         type: boolean
     outputs:
+      runner-image-name:
+        description: Exact local E2E runner image reference used by every shard.
+        value: ${{ jobs.build_runner.outputs.image-name }}
+      runner-image-id:
+        description: Content-addressed E2E runner Docker image ID.
+        value: ${{ jobs.build_runner.outputs.image-id }}
+      runner-image-artifact:
+        description: Artifact containing the portable E2E runner Docker archive.
+        value: ${{ jobs.build_runner.outputs.artifact-name }}
+      report-image-name:
+        description: Local image reference for the packaged E2E HTML report.
+        value: ${{ jobs.merge.outputs.report-image-name }}
+      report-image-id:
+        description: Content-addressed E2E report Docker image ID.
+        value: ${{ jobs.merge.outputs.report-image-id }}
+      report-image-artifact:
+        description: Artifact containing the portable E2E report Docker archive.
+        value: ${{ jobs.merge.outputs.report-image-artifact }}
       verdict:
         description: Authoritative E2E verdict.
         value: ${{ jobs.e2e_gate.outputs.verdict }}
@@ -85,7 +93,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   plan:
@@ -111,9 +118,45 @@ jobs:
           ')"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
+  build_runner:
+    name: Build E2E runner image
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      image-name: ${{ steps.build.outputs.image-name }}
+      image-id: ${{ steps.build.outputs.image-id }}
+      artifact-name: ${{ steps.upload-runner.outcome == 'success' && 'e2e-runner-image' || '' }}
+    steps:
+      - name: Check out caller repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - id: build
+        name: Build E2E runner image
+        uses: $/.github/actions/build-e2e-runner
+        with:
+          working-directory: ${{ inputs.working-directory }}
+          dockerfile: Dockerfile
+          image-name: playwright-e2e-runner:${{ github.sha }}
+          archive-path: .e2e-runner/playwright-e2e-runner.tar.zst
+
+      - id: upload-runner
+        name: Upload portable E2E runner image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-runner-image
+          path: ${{ steps.build.outputs.archive-path }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.artifact-retention-days }}
+
   shards:
     name: E2E shard ${{ matrix.shard }}/${{ inputs.shard-count }}
-    needs: plan
+    needs:
+      - plan
+      - build_runner
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -122,14 +165,22 @@ jobs:
     steps:
       - name: Check out caller repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Prepare E2E environment
-        uses: $/.github/actions/prepare-e2e
         with:
-          working-directory: ${{ inputs.working-directory }}
-          node-version: ${{ inputs.node-version }}
-          pnpm-version: ${{ inputs.pnpm-version }}
-          playwright-browser: chromium
+          persist-credentials: false
+
+      - id: download-runner
+        name: Download E2E runner image
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ needs.build_runner.outputs.artifact-name }}
+          path: runner-image
+
+      - id: load-runner
+        name: Load E2E runner image
+        continue-on-error: true
+        shell: bash
+        run: docker load --input runner-image/playwright-e2e-runner.tar.zst
 
       - id: run
         name: Run Playwright shard
@@ -140,6 +191,10 @@ jobs:
           playwright-config: ${{ inputs.playwright-config }}
           compose-file: ${{ inputs.compose-file }}
           base-url: ${{ inputs.base-url }}
+          runner-image-name: ${{ needs.build_runner.outputs.image-name }}
+          runner-image-id: ${{ needs.build_runner.outputs.image-id }}
+          runner-download-outcome: ${{ steps.download-runner.outcome }}
+          runner-load-outcome: ${{ steps.load-runner.outcome }}
           projects: ${{ inputs.projects }}
           labels: ${{ inputs.labels }}
           label-match: ${{ inputs.label-match }}
@@ -157,7 +212,10 @@ jobs:
           retention-days: ${{ inputs.artifact-retention-days }}
 
       - name: Preserve shard verdict
-        if: always() && steps.run.outcome != 'success'
+        if: >-
+          always() && (steps.download-runner.outcome != 'success' ||
+          steps.load-runner.outcome != 'success' ||
+          steps.run.outcome != 'success')
         shell: bash
         run: |
           echo "::error::E2E shard ${{ matrix.shard }} did not complete successfully"
@@ -167,29 +225,58 @@ jobs:
     name: Merge E2E evidence
     needs:
       - plan
+      - build_runner
       - shards
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      verdict: ${{ steps.merge.outputs.verdict }}
-      artifact-name: ${{ steps.merge.outputs.artifact-name }}
-      total: ${{ steps.merge.outputs.total }}
-      passed: ${{ steps.merge.outputs.passed }}
-      failed: ${{ steps.merge.outputs.failed }}
-      skipped: ${{ steps.merge.outputs.skipped }}
+      verdict: ${{ steps.publish.outputs.verdict }}
+      artifact-name: ${{ steps.publish.outputs.artifact-name }}
+      total: ${{ steps.publish.outputs.total }}
+      passed: ${{ steps.publish.outputs.passed }}
+      failed: ${{ steps.publish.outputs.failed }}
+      skipped: ${{ steps.publish.outputs.skipped }}
+      report-image-name: ${{ steps.package-report.outcome == 'success' && steps.package-report.outputs.image-name || '' }}
+      report-image-id: ${{ steps.package-report.outcome == 'success' && steps.package-report.outputs.image-id || '' }}
+      report-image-artifact: ${{ steps.package-report.outcome == 'success' && steps.package-report.outputs.artifact-name || '' }}
     steps:
-      - name: Check out caller repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Prepare report tooling
-        uses: $/.github/actions/prepare-e2e
+      - id: download-runner
+        name: Download E2E runner image
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          working-directory: ${{ inputs.working-directory }}
-          node-version: ${{ inputs.node-version }}
-          pnpm-version: ${{ inputs.pnpm-version }}
-          playwright-browser: chromium
-          install-browser: "false"
+          name: e2e-runner-image
+          path: runner-image
+
+      - id: load-runner
+        name: Load E2E runner image
+        continue-on-error: true
+        shell: bash
+        run: docker load --input runner-image/playwright-e2e-runner.tar.zst
+
+      - id: verify-runner
+        name: Verify immutable E2E runner image
+        continue-on-error: true
+        shell: bash
+        env:
+          E2E_RUNNER_IMAGE_NAME: ${{ needs.build_runner.outputs.image-name }}
+          E2E_RUNNER_IMAGE_ID: ${{ needs.build_runner.outputs.image-id }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$E2E_RUNNER_IMAGE_NAME" ]]; then
+            echo "Expected E2E runner image name is empty" >&2
+            exit 1
+          fi
+          if [[ ! "$E2E_RUNNER_IMAGE_ID" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "Invalid expected E2E runner image ID: $E2E_RUNNER_IMAGE_ID" >&2
+            exit 1
+          fi
+          actual_image_id="$(docker image inspect --format '{{.Id}}' "$E2E_RUNNER_IMAGE_NAME")"
+          if [[ "$actual_image_id" != "$E2E_RUNNER_IMAGE_ID" ]]; then
+            echo "E2E runner image ID mismatch: expected $E2E_RUNNER_IMAGE_ID, got $actual_image_id" >&2
+            exit 1
+          fi
 
       - id: download
         name: Download shard evidence
@@ -202,20 +289,47 @@ jobs:
           merge-multiple: false
 
       - id: merge
-        name: Merge and publish evidence
+        name: Merge E2E evidence
         if: always()
         continue-on-error: true
         uses: $/.github/actions/merge-e2e-evidence
         with:
-          working-directory: ${{ inputs.working-directory }}
           download-directory: downloaded-shards
+          evidence-directory: e2e-evidence
+          expected-shards: ${{ inputs.shard-count }}
+          runner-image-id: ${{ needs.build_runner.outputs.image-id }}
+
+      - id: package-report
+        name: Package E2E report image
+        if: always()
+        continue-on-error: true
+        uses: $/.github/actions/package-e2e-report
+        with:
+          report-directory: e2e-evidence/playwright-report
+          image-name: playwright-e2e-report:${{ github.run_id }}-${{ github.run_attempt }}
+          archive-directory: e2e-report-image
+          artifact-name: e2e-report-image
+          retention-days: ${{ inputs.artifact-retention-days }}
+
+      - id: publish
+        name: Publish and enforce authoritative evidence
+        if: always()
+        continue-on-error: true
+        uses: $/.github/actions/publish-e2e-evidence
+        with:
           evidence-directory: e2e-evidence
           expected-shards: ${{ inputs.shard-count }}
           artifact-name: e2e-evidence
           retention-days: ${{ inputs.artifact-retention-days }}
+          runner-download-outcome: ${{ steps.download-runner.outcome }}
+          runner-load-outcome: ${{ steps.load-runner.outcome }}
+          runner-verification-outcome: ${{ steps.verify-runner.outcome }}
+          shard-download-outcome: ${{ steps.download.outcome }}
+          merge-outcome: ${{ steps.merge.outcome }}
+          report-publication-outcome: ${{ steps.package-report.outcome }}
 
       - name: Preserve merge verdict
-        if: always() && (steps.download.outcome != 'success' || steps.merge.outcome != 'success')
+        if: always() && steps.publish.outcome != 'success'
         shell: bash
         run: |
           echo "::error::E2E evidence could not be completed successfully"
@@ -254,6 +368,7 @@ jobs:
   pr_comment:
     name: E2E PR report
     needs:
+      - build_runner
       - merge
       - e2e_gate
     if: >-
@@ -261,6 +376,8 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    permissions:
+      pull-requests: write
     steps:
       - name: Create or update E2E report
         continue-on-error: true
@@ -275,6 +392,12 @@ jobs:
           E2E_FAILED: ${{ needs.merge.outputs.failed }}
           E2E_SKIPPED: ${{ needs.merge.outputs.skipped }}
           E2E_ARTIFACT_NAME: ${{ needs.merge.outputs.artifact-name }}
+          E2E_RUNNER_IMAGE_NAME: ${{ needs.build_runner.outputs.image-name }}
+          E2E_RUNNER_IMAGE_ID: ${{ needs.build_runner.outputs.image-id }}
+          E2E_RUNNER_IMAGE_ARTIFACT: ${{ needs.build_runner.outputs.artifact-name }}
+          E2E_REPORT_IMAGE_NAME: ${{ needs.merge.outputs.report-image-name }}
+          E2E_REPORT_IMAGE_ID: ${{ needs.merge.outputs.report-image-id }}
+          E2E_REPORT_IMAGE_ARTIFACT: ${{ needs.merge.outputs.report-image-artifact }}
           E2E_PROJECTS: ${{ inputs.projects }}
           E2E_LABELS: ${{ inputs.labels }}
           E2E_LABEL_MATCH: ${{ inputs.label-match }}
@@ -309,6 +432,12 @@ jobs:
             const labels = list(process.env.E2E_LABELS, 'All labels');
             const labelMatch = clean(process.env.E2E_LABEL_MATCH, 'all');
             const artifactName = clean(process.env.E2E_ARTIFACT_NAME, 'e2e-evidence');
+            const runnerImageName = clean(process.env.E2E_RUNNER_IMAGE_NAME, 'unavailable');
+            const runnerImageId = clean(process.env.E2E_RUNNER_IMAGE_ID, 'unavailable');
+            const runnerImageArtifact = clean(process.env.E2E_RUNNER_IMAGE_ARTIFACT, 'unavailable');
+            const reportImageName = clean(process.env.E2E_REPORT_IMAGE_NAME, 'unavailable');
+            const reportImageId = clean(process.env.E2E_REPORT_IMAGE_ID, 'unavailable');
+            const reportImageArtifact = clean(process.env.E2E_REPORT_IMAGE_ARTIFACT, 'unavailable');
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
 
             const lines = [
@@ -322,6 +451,8 @@ jobs:
               `| Projects | ${cell(projects)} |`,
               `| Labels | ${cell(`${labels} · match ${labelMatch}`)} |`,
               '| SUT | Docker Compose, isolated per shard |',
+              `| Runner image | ${cell(`\`${runnerImageName}\` · \`${runnerImageId}\` · \`${runnerImageArtifact}\``)} |`,
+              `| Report image | ${cell(`\`${reportImageName}\` · \`${reportImageId}\` · \`${reportImageArtifact}\``)} |`,
               `| Evidence | [Open workflow run](${runUrl}) · \`${cell(artifactName)}\` |`,
             ];
 

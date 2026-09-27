@@ -13,7 +13,6 @@ import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 
 const [
   workspace,
-  requestedWorkingDirectory,
   requestedDownloadDirectory,
   requestedEvidenceDirectory,
   requestedExpectedShards,
@@ -47,7 +46,6 @@ const assertRelative = (value, label) => {
 };
 
 for (const [value, label] of [
-  [requestedWorkingDirectory, "working-directory"],
   [requestedDownloadDirectory, "download-directory"],
   [requestedEvidenceDirectory, "evidence-directory"],
 ]) {
@@ -55,7 +53,6 @@ for (const [value, label] of [
 }
 
 const workspacePath = realpathSync(workspace);
-const workingDirectory = resolve(workspacePath, requestedWorkingDirectory);
 const downloadDirectory = resolve(workspacePath, requestedDownloadDirectory);
 const evidenceDirectory = resolve(workspacePath, requestedEvidenceDirectory);
 
@@ -75,12 +72,10 @@ const htmlDirectory = resolve(evidenceDirectory, "playwright-report");
 mkdirSync(blobDirectory, { recursive: true });
 mkdirSync(ctrfDirectory, { recursive: true });
 mkdirSync(statusDirectory, { recursive: true });
+mkdirSync(htmlDirectory, { recursive: true });
 
 const errors = [];
-for (const [path, label] of [
-  [workingDirectory, "working-directory"],
-  [downloadDirectory, "download-directory"],
-]) {
+for (const [path, label] of [[downloadDirectory, "download-directory"]]) {
   if (!existsSync(path) || !lstatSync(path).isDirectory()) {
     errors.push(`${label} does not exist or is not a directory: ${path}`);
     continue;
@@ -205,7 +200,6 @@ const appendOutput = (name, value) => {
   writeFileSync(outputFile, `${name}=${escaped}\n`, { flag: "a" });
 };
 
-appendOutput("working-directory", workingDirectory);
 appendOutput("evidence-directory", evidenceDirectory);
 appendOutput("blob-directory", blobDirectory);
 appendOutput("html-directory", htmlDirectory);

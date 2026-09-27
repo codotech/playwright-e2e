@@ -18,6 +18,18 @@ inputs:
     description: Base URL exposed by the Dockerized SUT.
     required: false
     default: http://127.0.0.1:4173
+  runner-image-name:
+    description: Exact local Docker image reference loaded from the runner artifact.
+    required: true
+  runner-image-id:
+    description: Expected content-addressed Docker image ID.
+    required: true
+  runner-download-outcome:
+    description: Outcome of the workflow step that downloaded the runner image artifact.
+    required: true
+  runner-load-outcome:
+    description: Outcome of the workflow step that loaded the runner image archive.
+    required: true
   projects:
     description: Newline-delimited Playwright project names; empty selects all projects.
     required: false
@@ -66,6 +78,10 @@ runs:
         E2E_PLAYWRIGHT_CONFIG: ${{ inputs.playwright-config }}
         E2E_COMPOSE_FILE: ${{ inputs.compose-file }}
         E2E_BASE_URL: ${{ inputs.base-url }}
+        E2E_RUNNER_IMAGE_NAME: ${{ inputs.runner-image-name }}
+        E2E_RUNNER_IMAGE_ID: ${{ inputs.runner-image-id }}
+        E2E_RUNNER_DOWNLOAD_OUTCOME: ${{ inputs.runner-download-outcome }}
+        E2E_RUNNER_LOAD_OUTCOME: ${{ inputs.runner-load-outcome }}
         E2E_PROJECTS: ${{ inputs.projects }}
         E2E_LABELS: ${{ inputs.labels }}
         E2E_LABEL_MATCH: ${{ inputs.label-match }}
@@ -81,6 +97,10 @@ runs:
           "$E2E_PLAYWRIGHT_CONFIG" \
           "$E2E_COMPOSE_FILE" \
           "$E2E_BASE_URL" \
+          "$E2E_RUNNER_IMAGE_NAME" \
+          "$E2E_RUNNER_IMAGE_ID" \
+          "$E2E_RUNNER_DOWNLOAD_OUTCOME" \
+          "$E2E_RUNNER_LOAD_OUTCOME" \
           "$E2E_PROJECTS" \
           "$E2E_LABELS" \
           "$E2E_LABEL_MATCH" \
@@ -90,18 +110,54 @@ runs:
 
         {
           echo "working-directory=$E2E_ABSOLUTE_WORKING_DIRECTORY"
-          echo "config=$E2E_ABSOLUTE_CONFIG"
+          echo "config=$E2E_CONTAINER_CONFIG"
           echo "compose-file=$E2E_ABSOLUTE_COMPOSE_FILE"
           echo "base-url=$E2E_BASE_URL"
           echo "compose-project=$E2E_COMPOSE_PROJECT"
+          echo "runner-image-name=$E2E_RUNNER_IMAGE_NAME"
+          echo "runner-image-id=$E2E_RUNNER_IMAGE_ID"
           echo "selection-file=$E2E_SELECTION_FILE"
           echo "shard-directory=$E2E_SHARD_DIRECTORY"
           echo "status-file=$E2E_STATUS_FILE"
         } >> "$GITHUB_OUTPUT"
 
+    - name: Verify loaded E2E runner image
+      id: runner
+      if: >-
+        always() && steps.initialize.outcome == 'success' &&
+        inputs.runner-download-outcome == 'success' &&
+        inputs.runner-load-outcome == 'success'
+      continue-on-error: true
+      shell: bash
+      env:
+        E2E_RUNNER_IMAGE_NAME: ${{ steps.initialize.outputs.runner-image-name }}
+        E2E_RUNNER_IMAGE_ID: ${{ steps.initialize.outputs.runner-image-id }}
+        E2E_SHARD_DIRECTORY: ${{ steps.initialize.outputs.shard-directory }}
+      run: |
+        set +e
+        runner_log="$E2E_SHARD_DIRECTORY/runner-image.log"
+        actual_image_id="$(docker image inspect \
+          --format '{{.Id}}' "$E2E_RUNNER_IMAGE_NAME" 2> "$runner_log")"
+        runner_exit_code=$?
+
+        if [[ "$runner_exit_code" -eq 0 && "$actual_image_id" != "$E2E_RUNNER_IMAGE_ID" ]]; then
+          echo "Runner image ID mismatch: expected $E2E_RUNNER_IMAGE_ID, got $actual_image_id" \
+            >> "$runner_log"
+          runner_exit_code=42
+        fi
+
+        cat "$runner_log"
+        {
+          echo "exit-code=$runner_exit_code"
+          echo "actual-image-id=$actual_image_id"
+        } >> "$GITHUB_OUTPUT"
+        exit "$runner_exit_code"
+
     - name: Start Dockerized SUT
       id: start
-      if: always() && steps.initialize.outcome == 'success'
+      if: >-
+        always() && steps.initialize.outcome == 'success' &&
+        steps.runner.outputs.exit-code == '0'
       continue-on-error: true
       shell: bash
       env:
@@ -123,13 +179,16 @@ runs:
 
     - name: Run Playwright shard
       id: playwright
-      if: steps.initialize.outcome == 'success' && steps.start.outputs.exit-code == '0'
+      if: >-
+        steps.initialize.outcome == 'success' &&
+        steps.runner.outputs.exit-code == '0' &&
+        steps.start.outputs.exit-code == '0'
       continue-on-error: true
       shell: bash
       env:
-        E2E_WORKING_DIRECTORY: ${{ steps.initialize.outputs.working-directory }}
         E2E_CONFIG: ${{ steps.initialize.outputs.config }}
         E2E_BASE_URL: ${{ steps.initialize.outputs.base-url }}
+        E2E_RUNNER_IMAGE_ID: ${{ steps.runner.outputs.actual-image-id }}
         E2E_SHARD_DIRECTORY: ${{ steps.initialize.outputs.shard-directory }}
         E2E_SELECTION_FILE: ${{ steps.initialize.outputs.selection-file }}
         E2E_SHARD_INDEX: ${{ inputs.shard-index }}
@@ -142,7 +201,7 @@ runs:
         selection_exit_code=$?
         if [[ "$selection_exit_code" -ne 0 ]]; then
           echo "exit-code=$selection_exit_code" >> "$GITHUB_OUTPUT"
-          echo "failure-kind=infrastructure" >> "$GITHUB_OUTPUT"
+          echo "failure-kind=selection" >> "$GITHUB_OUTPUT"
           exit "$selection_exit_code"
         fi
 
@@ -151,21 +210,37 @@ runs:
           playwright_selection_args+=("$argument")
         done < "$selection_args_file"
         (
-          cd "$E2E_WORKING_DIRECTORY"
-          BASE_URL="$E2E_BASE_URL" \
-          CI=true \
-          E2E_RESULTS_DIR="$E2E_SHARD_DIRECTORY/test-results" \
-          PLAYWRIGHT_BLOB_OUTPUT_DIR="$E2E_SHARD_DIRECTORY/blob-report" \
-          PLAYWRIGHT_OUTPUT_DIR="$E2E_SHARD_DIRECTORY/test-results" \
-          CTRF_OUTPUT_FILE="$E2E_SHARD_DIRECTORY/ctrf/ctrf-report.json" \
-          pnpm exec playwright test \
+          docker run --rm \
+            --init \
+            --network=host \
+            --ipc=host \
+            --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=512m \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges:true \
+            --pids-limit=1024 \
+            --user "$(id -u):$(id -g)" \
+            --env BASE_URL="$E2E_BASE_URL" \
+            --env CI=true \
+            --env HOME=/tmp \
+            --env E2E_RESULTS_DIR=/evidence/test-results \
+            --env PLAYWRIGHT_BLOB_OUTPUT_DIR=/evidence/blob-report \
+            --env PLAYWRIGHT_OUTPUT_DIR=/evidence/test-results \
+            --env CTRF_OUTPUT_FILE=/evidence/ctrf/ctrf-report.json \
+            --volume "$E2E_SHARD_DIRECTORY:/evidence" \
+            "$E2E_RUNNER_IMAGE_ID" \
             --config "$E2E_CONFIG" \
             --shard="$E2E_SHARD_INDEX/$E2E_SHARD_TOTAL" \
             "${playwright_selection_args[@]}"
         )
         playwright_exit_code=$?
         echo "exit-code=$playwright_exit_code" >> "$GITHUB_OUTPUT"
-        echo "failure-kind=test" >> "$GITHUB_OUTPUT"
+        if [[ "$playwright_exit_code" =~ ^12[567]$ ]] || \
+          [[ "$playwright_exit_code" -ge 128 ]]; then
+          echo "failure-kind=runner-container" >> "$GITHUB_OUTPUT"
+        else
+          echo "failure-kind=test" >> "$GITHUB_OUTPUT"
+        fi
         exit "$playwright_exit_code"
 
     - name: Capture Dockerized SUT logs
@@ -216,6 +291,10 @@ runs:
       shell: bash
       env:
         E2E_STATUS_FILE: ${{ steps.initialize.outputs.status-file }}
+        E2E_RUNNER_DOWNLOAD_OUTCOME: ${{ inputs.runner-download-outcome }}
+        E2E_RUNNER_LOAD_OUTCOME: ${{ inputs.runner-load-outcome }}
+        E2E_RUNNER_EXIT_CODE: ${{ steps.runner.outputs.exit-code }}
+        E2E_ACTUAL_RUNNER_IMAGE_ID: ${{ steps.runner.outputs.actual-image-id }}
         E2E_STARTUP_EXIT_CODE: ${{ steps.start.outputs.exit-code }}
         E2E_PLAYWRIGHT_EXIT_CODE: ${{ steps.playwright.outputs.exit-code }}
         E2E_PLAYWRIGHT_FAILURE_KIND: ${{ steps.playwright.outputs.failure-kind }}
@@ -225,6 +304,10 @@ runs:
         set +e
         node "$GITHUB_ACTION_PATH/complete-shard.mjs" \
           "$E2E_STATUS_FILE" \
+          "$E2E_RUNNER_DOWNLOAD_OUTCOME" \
+          "$E2E_RUNNER_LOAD_OUTCOME" \
+          "$E2E_RUNNER_EXIT_CODE" \
+          "$E2E_ACTUAL_RUNNER_IMAGE_ID" \
           "$E2E_STARTUP_EXIT_CODE" \
           "$E2E_PLAYWRIGHT_EXIT_CODE" \
           "$E2E_PLAYWRIGHT_FAILURE_KIND" \

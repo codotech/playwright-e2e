@@ -14,6 +14,10 @@ const [
   requestedConfig,
   requestedComposeFile,
   requestedBaseUrl,
+  requestedRunnerImageName,
+  requestedRunnerImageId,
+  requestedRunnerDownloadOutcome,
+  requestedRunnerLoadOutcome,
   requestedProjects,
   requestedLabels,
   requestedLabelMatch,
@@ -55,6 +59,28 @@ try {
 }
 if (!["http:", "https:"].includes(baseUrl.protocol)) {
   fail("base-url must use HTTP or HTTPS");
+}
+if (!requestedRunnerImageName || /[\s\0]/.test(requestedRunnerImageName)) {
+  fail("runner-image-name must be a non-empty Docker reference without whitespace");
+}
+if (!/^sha256:[a-f0-9]{64}$/.test(requestedRunnerImageId)) {
+  fail(`runner-image-id must be a sha256 image ID; received ${requestedRunnerImageId}`);
+}
+const allowedStepOutcomes = new Set([
+  "success",
+  "failure",
+  "cancelled",
+  "skipped",
+]);
+for (const [label, outcome] of [
+  ["runner-download-outcome", requestedRunnerDownloadOutcome],
+  ["runner-load-outcome", requestedRunnerLoadOutcome],
+]) {
+  if (!allowedStepOutcomes.has(outcome)) {
+    fail(
+      `${label} must be success, failure, cancelled, or skipped; received ${outcome}`,
+    );
+  }
 }
 const selection = createSelection(
   requestedProjects,
@@ -139,6 +165,14 @@ const status = {
     grep: selection.grep,
   },
   lifecycle: {
+    runner: {
+      imageName: requestedRunnerImageName,
+      expectedImageId: requestedRunnerImageId,
+      actualImageId: null,
+      downloadOutcome: requestedRunnerDownloadOutcome,
+      loadOutcome: requestedRunnerLoadOutcome,
+      verificationExitCode: null,
+    },
     sut: {
       composeFile: requestedComposeFile,
       baseUrl: baseUrl.toString(),
@@ -175,9 +209,12 @@ const quoteForShell = (value) => `'${value.replaceAll("'", `'"'"'`)}'`;
 const variables = {
   E2E_ABSOLUTE_WORKING_DIRECTORY: resolvedWorkingDirectory,
   E2E_ABSOLUTE_CONFIG: configPath,
+  E2E_CONTAINER_CONFIG: requestedConfig,
   E2E_ABSOLUTE_COMPOSE_FILE: resolvedComposeFile,
   E2E_BASE_URL: baseUrl.toString(),
   E2E_COMPOSE_PROJECT: composeProject,
+  E2E_RUNNER_IMAGE_NAME: requestedRunnerImageName,
+  E2E_RUNNER_IMAGE_ID: requestedRunnerImageId,
   E2E_SELECTION_FILE: selectionFile,
   E2E_SHARD_DIRECTORY: shardDirectory,
   E2E_STATUS_FILE: statusFile,

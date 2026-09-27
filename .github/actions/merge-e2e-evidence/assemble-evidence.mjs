@@ -7,8 +7,12 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 
-const [evidenceDirectory, requestedExpectedShards, requestedHtmlMergeExitCode] =
-  process.argv.slice(2);
+const [
+  evidenceDirectory,
+  requestedExpectedShards,
+  requestedHtmlMergeExitCode,
+  outputFile,
+] = process.argv.slice(2);
 const expectedShards = Number(requestedExpectedShards);
 const htmlMergeExitCode = Number(requestedHtmlMergeExitCode);
 const stagingDirectory = resolve(evidenceDirectory, ".merge-input");
@@ -213,5 +217,18 @@ writeFileSync(
   resolve(evidenceDirectory, "verdict.json"),
   `${JSON.stringify(verdict, null, 2)}\n`,
 );
+
+if (outputFile) {
+  for (const [name, value] of [
+    ["verdict", verdict.result],
+    ["total", verdict.summary.total],
+    ["passed", verdict.summary.passed],
+    ["failed", verdict.summary.failed],
+    ["skipped", verdict.summary.skipped],
+    ["verdict-file", resolve(evidenceDirectory, "verdict.json")],
+  ]) {
+    writeFileSync(outputFile, `${name}=${value}\n`, { flag: "a" });
+  }
+}
 
 rmSync(stagingDirectory, { recursive: true, force: true });

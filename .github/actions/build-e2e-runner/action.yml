@@ -1,0 +1,73 @@
+name: Build E2E Runner
+description: Build the Playwright runner once and save a portable zstd-compressed Docker archive.
+
+inputs:
+  working-directory:
+    description: Repository-relative Docker build context containing the E2E runner.
+    required: false
+    default: e2e
+  dockerfile:
+    description: Dockerfile path relative to working-directory.
+    required: false
+    default: Dockerfile
+  image-name:
+    description: Complete local Docker image reference, including an immutable tag.
+    required: true
+  archive-path:
+    description: Repository-relative output path for the zstd-compressed Docker image archive.
+    required: false
+    default: .e2e-runner/playwright-e2e-runner.tar.zst
+
+outputs:
+  image-name:
+    description: Local Docker image reference saved in the archive.
+    value: ${{ steps.build.outputs.image-name }}
+  image-id:
+    description: Content-addressed Docker image ID.
+    value: ${{ steps.build.outputs.image-id }}
+  archive-path:
+    description: Absolute path to the portable .tar.zst Docker image archive.
+    value: ${{ steps.build.outputs.archive-path }}
+
+runs:
+  using: composite
+  steps:
+    - id: build
+      name: Build and save runner image
+      shell: bash
+      env:
+        E2E_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        E2E_DOCKERFILE: ${{ inputs.dockerfile }}
+        E2E_RUNNER_IMAGE: ${{ inputs.image-name }}
+        E2E_ARCHIVE_PATH: ${{ inputs.archive-path }}
+      run: |
+        set -euo pipefail
+
+        eval "$(node "$GITHUB_ACTION_PATH/prepare-build.mjs" \
+          "$GITHUB_WORKSPACE" \
+          "$E2E_WORKING_DIRECTORY" \
+          "$E2E_DOCKERFILE" \
+          "$E2E_RUNNER_IMAGE" \
+          "$E2E_ARCHIVE_PATH")"
+
+        docker build \
+          --file "$E2E_ABSOLUTE_DOCKERFILE" \
+          --tag "$E2E_RUNNER_IMAGE" \
+          "$E2E_BUILD_CONTEXT"
+
+        image_id="$(docker image inspect --format '{{.Id}}' "$E2E_RUNNER_IMAGE")"
+        if [[ ! "$image_id" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+          echo "Unexpected Docker image ID: $image_id" >&2
+          exit 1
+        fi
+
+        command -v zstd > /dev/null
+        docker save "$E2E_RUNNER_IMAGE" | \
+          zstd -T0 -3 --force -o "$E2E_ABSOLUTE_ARCHIVE_PATH"
+        test -s "$E2E_ABSOLUTE_ARCHIVE_PATH"
+
+        {
+          echo "image-name=$E2E_RUNNER_IMAGE"
+          echo "image-id=$image_id"
+          echo "archive-path=$E2E_ABSOLUTE_ARCHIVE_PATH"
+        } >> "$GITHUB_OUTPUT"
