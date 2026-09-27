@@ -1,0 +1,73 @@
+name: Prepare E2E
+description: Validate and install a root-level Playwright E2E workspace.
+
+inputs:
+  working-directory:
+    description: Repository-relative directory containing the E2E package.
+    required: false
+    default: e2e
+  node-version:
+    description: Node.js version used by the E2E package.
+    required: false
+    default: "22"
+  pnpm-version:
+    description: Exact pnpm version used to install the E2E package.
+    required: false
+    default: 10.26.2
+  playwright-browser:
+    description: Playwright browser installed with its operating-system dependencies.
+    required: false
+    default: chromium
+  install-browser:
+    description: Whether to install the Playwright browser and operating-system dependencies.
+    required: false
+    default: "true"
+
+outputs:
+  working-directory:
+    description: Absolute, validated E2E working directory.
+    value: ${{ steps.contract.outputs.working-directory }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate E2E workspace contract
+      id: contract
+      shell: bash
+      env:
+        E2E_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        PLAYWRIGHT_BROWSER: ${{ inputs.playwright-browser }}
+      run: |
+        set -euo pipefail
+
+        node "$GITHUB_ACTION_PATH/validate-workspace.mjs" \
+          "$GITHUB_WORKSPACE" \
+          "$E2E_WORKING_DIRECTORY" \
+          "$PLAYWRIGHT_BROWSER" \
+          "$GITHUB_OUTPUT"
+
+    - name: Set up pnpm
+      uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      with:
+        version: ${{ inputs.pnpm-version }}
+        run_install: false
+
+    - name: Set up Node.js
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: pnpm
+        cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
+
+    - name: Install E2E dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: pnpm install --frozen-lockfile
+
+    - name: Install Playwright browser
+      if: inputs.install-browser == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PLAYWRIGHT_BROWSER: ${{ inputs.playwright-browser }}
+      run: pnpm exec playwright install --with-deps "$PLAYWRIGHT_BROWSER"

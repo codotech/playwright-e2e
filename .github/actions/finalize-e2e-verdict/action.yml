@@ -1,0 +1,47 @@
+name: Finalize E2E Verdict
+description: Enforce the evidence verdict and all upstream GitHub Actions job results.
+
+inputs:
+  verdict-file:
+    description: Path to the downloaded verdict.json, absolute or relative to GITHUB_WORKSPACE.
+    required: true
+  shard-job-result:
+    description: GitHub Actions result of the shard matrix job.
+    required: true
+  merge-job-result:
+    description: GitHub Actions result of the merge and publication job.
+    required: true
+  publication-result:
+    description: Additional publication result when publication is a separate workflow operation.
+    required: false
+    default: success
+
+outputs:
+  verdict:
+    description: Final enforced verdict.
+    value: ${{ steps.finalize.outputs.verdict }}
+  primary-failure:
+    description: Primary failure message, empty when the verdict passed.
+    value: ${{ steps.finalize.outputs.primary-failure }}
+
+runs:
+  using: composite
+  steps:
+    - name: Enforce final E2E verdict
+      id: finalize
+      shell: bash
+      env:
+        E2E_VERDICT_FILE: ${{ inputs.verdict-file }}
+        E2E_SHARD_JOB_RESULT: ${{ inputs.shard-job-result }}
+        E2E_MERGE_JOB_RESULT: ${{ inputs.merge-job-result }}
+        E2E_PUBLICATION_RESULT: ${{ inputs.publication-result }}
+      run: |
+        set -euo pipefail
+        node "$GITHUB_ACTION_PATH/finalize.mjs" \
+          "$GITHUB_WORKSPACE" \
+          "$E2E_VERDICT_FILE" \
+          "$E2E_SHARD_JOB_RESULT" \
+          "$E2E_MERGE_JOB_RESULT" \
+          "$E2E_PUBLICATION_RESULT" \
+          "$GITHUB_STEP_SUMMARY" \
+          "$GITHUB_OUTPUT"
