@@ -56,6 +56,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   e2e:
@@ -82,6 +83,7 @@ Replace the marker with the immutable SHA you adopt. The workflow needs no inher
 | `pnpm-version` | `10.26.2` | pnpm runtime |
 | `shard-count` | `2` | Parallel shards, from 1 through 32 |
 | `artifact-retention-days` | `10` | Evidence retention period |
+| `comment-on-pr` | `true` | Update one E2E report comment on same-repository pull requests |
 
 The outputs are `verdict`, `artifact-name`, `total`, `passed`, `failed`, and `skipped`.
 
@@ -159,5 +161,7 @@ e2e-evidence/
 ```
 
 `E2E Gate` fails for a failed or cancelled shard, unhealthy SUT lifecycle, missing evidence, report merge failure, artifact failure, or a non-passing verdict. Evidence publication cannot turn a failed run green.
+
+For pull requests from the same repository, the workflow creates or updates one sticky `E2E confidence report` comment with the verdict, aggregate totals, active project and label filters, failure reason, and workflow evidence link. Grant `pull-requests: write` in the caller workflow, or set `comment-on-pr: false` when comments are not wanted. Comment publication is non-blocking and does not change the gate verdict.
 
 The framework targets GitHub.com and uses `$/` references so the reusable workflow and its composite actions come from the same commit. That syntax is not available on GitHub Enterprise Server.

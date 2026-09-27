@@ -58,6 +58,11 @@ on:
         required: false
         default: 10
         type: number
+      comment-on-pr:
+        description: Create or update one E2E report comment on same-repository pull requests.
+        required: false
+        default: true
+        type: boolean
     outputs:
       verdict:
         description: Authoritative E2E verdict.
@@ -80,6 +85,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   plan:
@@ -244,3 +250,108 @@ jobs:
           shard-job-result: ${{ needs.shards.result }}
           merge-job-result: ${{ needs.merge.result }}
           publication-result: ${{ steps.download.outcome }}
+
+  pr_comment:
+    name: E2E PR report
+    needs:
+      - merge
+      - e2e_gate
+    if: >-
+      ${{ always() && inputs.comment-on-pr && github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Create or update E2E report
+        continue-on-error: true
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          E2E_GATE_JOB_RESULT: ${{ needs.e2e_gate.result }}
+          E2E_GATE_VERDICT: ${{ needs.e2e_gate.outputs.verdict }}
+          E2E_MERGE_VERDICT: ${{ needs.merge.outputs.verdict }}
+          E2E_PRIMARY_FAILURE: ${{ needs.e2e_gate.outputs.primary-failure }}
+          E2E_TOTAL: ${{ needs.merge.outputs.total }}
+          E2E_PASSED: ${{ needs.merge.outputs.passed }}
+          E2E_FAILED: ${{ needs.merge.outputs.failed }}
+          E2E_SKIPPED: ${{ needs.merge.outputs.skipped }}
+          E2E_ARTIFACT_NAME: ${{ needs.merge.outputs.artifact-name }}
+          E2E_PROJECTS: ${{ inputs.projects }}
+          E2E_LABELS: ${{ inputs.labels }}
+          E2E_LABEL_MATCH: ${{ inputs.label-match }}
+        with:
+          script: |
+            const marker = '<!-- playwright-e2e-ci-report -->';
+            const clean = (value, fallback) => {
+              const normalized = String(value ?? '').trim();
+              return normalized || fallback;
+            };
+            const cell = (value) => String(value).replaceAll('|', '\\|').replaceAll('\n', '<br>');
+            const list = (value, fallback) => {
+              const entries = String(value ?? '')
+                .split(/\r?\n/)
+                .map((entry) => entry.trim())
+                .filter(Boolean);
+              return entries.length > 0 ? entries.map((entry) => `\`${entry}\``).join(', ') : fallback;
+            };
+
+            const gateResult = clean(process.env.E2E_GATE_JOB_RESULT, 'failure');
+            const verdict = clean(
+              process.env.E2E_GATE_VERDICT,
+              clean(process.env.E2E_MERGE_VERDICT, gateResult === 'success' ? 'passed' : 'infrastructure-error'),
+            );
+            const passed = verdict === 'passed';
+            const status = passed ? '✅ Passed' : verdict === 'failed' ? '❌ Tests failed' : '⚠️ Infrastructure error';
+            const total = clean(process.env.E2E_TOTAL, 'unknown');
+            const passedCount = clean(process.env.E2E_PASSED, 'unknown');
+            const failedCount = clean(process.env.E2E_FAILED, 'unknown');
+            const skippedCount = clean(process.env.E2E_SKIPPED, 'unknown');
+            const projects = list(process.env.E2E_PROJECTS, 'All configured projects');
+            const labels = list(process.env.E2E_LABELS, 'All labels');
+            const labelMatch = clean(process.env.E2E_LABEL_MATCH, 'all');
+            const artifactName = clean(process.env.E2E_ARTIFACT_NAME, 'e2e-evidence');
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            const lines = [
+              marker,
+              '## E2E confidence report',
+              '',
+              '| Signal | Result |',
+              '| --- | --- |',
+              `| Gate | ${status} |`,
+              `| Tests | ${cell(`${passedCount} passed · ${failedCount} failed · ${skippedCount} skipped · ${total} total`)} |`,
+              `| Projects | ${cell(projects)} |`,
+              `| Labels | ${cell(`${labels} · match ${labelMatch}`)} |`,
+              '| SUT | Docker Compose, isolated per shard |',
+              `| Evidence | [Open workflow run](${runUrl}) · \`${cell(artifactName)}\` |`,
+            ];
+
+            const primaryFailure = clean(process.env.E2E_PRIMARY_FAILURE, '');
+            if (!passed && primaryFailure) {
+              lines.push('', `> ${primaryFailure.replaceAll('\n', '\n> ')}`);
+            }
+            lines.push('', `_Updated from run ${context.runId}._`);
+            const body = lines.join('\n');
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.body?.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
