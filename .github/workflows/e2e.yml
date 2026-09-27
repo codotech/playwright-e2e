@@ -1,0 +1,23 @@
+name: E2E
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: E2E pipeline
+    uses: $/.github/workflows/reusable-e2e.yml
+    with:
+      working-directory: e2e
+      shard-count: 2

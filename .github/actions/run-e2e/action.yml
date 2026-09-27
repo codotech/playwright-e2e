@@ -1,0 +1,93 @@
+name: Run E2E Shard
+description: Run one Playwright shard and always leave machine-readable shard evidence.
+
+inputs:
+  working-directory:
+    description: Repository-relative directory containing the E2E package.
+    required: false
+    default: e2e
+  playwright-config:
+    description: Path to the Playwright configuration, relative to working-directory.
+    required: false
+    default: playwright.config.ts
+  shard-index:
+    description: One-based shard index.
+    required: true
+  shard-total:
+    description: Total number of shards.
+    required: true
+  results-directory:
+    description: Results path relative to working-directory.
+    required: false
+    default: test-results
+
+outputs:
+  result:
+    description: Shard result, either passed or failed.
+    value: ${{ steps.execute.outputs.result }}
+  exit-code:
+    description: Playwright process exit code.
+    value: ${{ steps.execute.outputs.exit-code }}
+  shard-directory:
+    description: Absolute path containing this shard's evidence.
+    value: ${{ steps.execute.outputs.shard-directory }}
+  status-file:
+    description: Absolute path to this shard's status JSON.
+    value: ${{ steps.execute.outputs.status-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run Playwright shard
+      id: execute
+      shell: bash
+      env:
+        E2E_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        E2E_PLAYWRIGHT_CONFIG: ${{ inputs.playwright-config }}
+        E2E_SHARD_INDEX: ${{ inputs.shard-index }}
+        E2E_SHARD_TOTAL: ${{ inputs.shard-total }}
+        E2E_RESULTS_DIRECTORY: ${{ inputs.results-directory }}
+      run: |
+        set -euo pipefail
+
+        eval "$(node "$GITHUB_ACTION_PATH/prepare-shard.mjs" \
+          "$GITHUB_WORKSPACE" \
+          "$E2E_WORKING_DIRECTORY" \
+          "$E2E_PLAYWRIGHT_CONFIG" \
+          "$E2E_SHARD_INDEX" \
+          "$E2E_SHARD_TOTAL" \
+          "$E2E_RESULTS_DIRECTORY")"
+
+        set +e
+        (
+          cd "$E2E_ABSOLUTE_WORKING_DIRECTORY"
+          CI=true \
+          E2E_RESULTS_DIR="$E2E_SHARD_DIRECTORY/test-results" \
+          PLAYWRIGHT_BLOB_OUTPUT_DIR="$E2E_SHARD_DIRECTORY/blob-report" \
+          PLAYWRIGHT_OUTPUT_DIR="$E2E_SHARD_DIRECTORY/test-results" \
+          CTRF_OUTPUT_FILE="$E2E_SHARD_DIRECTORY/ctrf/ctrf-report.json" \
+          pnpm exec playwright test \
+            --config "$E2E_ABSOLUTE_CONFIG" \
+            --shard="$E2E_SHARD_INDEX/$E2E_SHARD_TOTAL"
+        )
+        playwright_exit_code=$?
+        set -e
+
+        node "$GITHUB_ACTION_PATH/complete-shard.mjs" \
+          "$E2E_STATUS_FILE" \
+          "$playwright_exit_code"
+
+        if [[ "$playwright_exit_code" -eq 0 ]]; then
+          result=passed
+        else
+          result=failed
+        fi
+
+        {
+          echo "result=$result"
+          echo "exit-code=$playwright_exit_code"
+          echo "shard-directory=$E2E_SHARD_DIRECTORY"
+          echo "status-file=$E2E_STATUS_FILE"
+        } >> "$GITHUB_OUTPUT"
+
+        exit "$playwright_exit_code"
