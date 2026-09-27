@@ -6,6 +6,25 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      projects:
+        description: Playwright project names, one per line; empty runs all projects.
+        required: false
+        default: ""
+        type: string
+      labels:
+        description: Playwright tags beginning with @, one per line; empty runs all tags.
+        required: false
+        default: ""
+        type: string
+      label-match:
+        description: Require all labels or any label.
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - any
 
 permissions:
   contents: read
@@ -20,4 +39,9 @@ jobs:
     uses: $/.github/workflows/reusable-e2e.yml
     with:
       working-directory: e2e
+      compose-file: compose.e2e.yml
+      base-url: http://127.0.0.1:4173
+      projects: ${{ github.event_name == 'workflow_dispatch' && inputs.projects || '' }}
+      labels: ${{ github.event_name == 'workflow_dispatch' && inputs.labels || '' }}
+      label-match: ${{ github.event_name == 'workflow_dispatch' && inputs.label-match || 'all' }}
       shard-count: 2

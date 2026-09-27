@@ -93,6 +93,9 @@ for (const fileName of ctrfFiles) {
 if (summary.tests === 0 && combinedTests.length > 0) {
   summary.tests = combinedTests.length;
 }
+if (summary.tests === 0) {
+  infrastructureFailures.push("No Playwright tests were executed");
+}
 if (starts.length > 0) summary.start = Math.min(...starts);
 if (stops.length > 0) summary.stop = Math.max(...stops);
 
@@ -118,14 +121,34 @@ writeFileSync(
 const failedShards = (scan.statuses ?? []).filter(
   (status) => status.result === "failed",
 );
-const incompleteShards = (scan.statuses ?? []).filter(
-  (status) => !["passed", "failed"].includes(status.result),
+const infrastructureErrorShards = (scan.statuses ?? []).filter(
+  (status) => status.result === "infrastructure-error",
 );
+const incompleteShards = (scan.statuses ?? []).filter(
+  (status) =>
+    !["passed", "failed", "infrastructure-error"].includes(status.result),
+);
+const shardInfrastructureFailures = (scan.statuses ?? []).flatMap((status) =>
+  [status.primaryFailure, ...(status.secondaryFailures ?? [])]
+    .filter((failure) => failure?.kind === "infrastructure")
+    .map(
+      (failure) =>
+        `Shard ${status.shard.index} ${failure.phase ?? "infrastructure"}: ${failure.message}`,
+    ),
+);
+if (infrastructureErrorShards.length > 0 && shardInfrastructureFailures.length === 0) {
+  shardInfrastructureFailures.push(
+    ...infrastructureErrorShards.map(
+      (status) => `Shard ${status.shard.index} reported an infrastructure error`,
+    ),
+  );
+}
 for (const status of incompleteShards) {
-  infrastructureFailures.push(
+  shardInfrastructureFailures.push(
     `Shard ${status.shard.index} did not complete; last state is ${status.result ?? "unknown"}`,
   );
 }
+infrastructureFailures.unshift(...shardInfrastructureFailures);
 
 const hasTestFailure = failedShards.length > 0 || summary.failed > 0;
 let primaryFailure = null;

@@ -1,50 +1,52 @@
 # Playwright E2E CI Framework
 
-A small, reusable GitHub Actions pipeline for running Playwright tests with reliable evidence and one fail-closed gate.
+A reusable GitHub Actions pipeline for Playwright tests against a Dockerized system under test (SUT), with durable evidence and one fail-closed gate.
 
-The repository includes a real example: Playwright starts a Node.js echo server, waits for its health endpoint, and tests it through API and Chromium clients.
+This repository proves the contract with a root Docker Compose service. The service exposes a health endpoint and echoes requests; Playwright tests it through API and Chromium clients.
 
 ```text
 pull request / main / manual
               |
-              v
-       plan two shards
-          /       \
-         v         v
-      shard 1   shard 2
-          \       /
-           v     v
-        merge evidence
+       +------+------+
+       |             |
+    shard 1        shard 2
+ compose up      compose up
+ Playwright      Playwright
+ logs + down     logs + down
+       |             |
+       +------+------+
               |
-              v
+       merge evidence
+              |
           E2E Gate
 ```
 
 ## Run the example locally
 
-Prerequisites: Node.js 22 and Corepack.
+Prerequisites: Docker, Node.js 22, and Corepack.
+
+Install the E2E dependencies and Chromium once:
 
 ```bash
 corepack enable
 corepack prepare pnpm@10.26.2 --activate
 pnpm --dir e2e install --frozen-lockfile
 pnpm --dir e2e install:browsers
-pnpm --dir e2e test
 ```
 
-The Playwright configuration owns the server lifecycle, so a separate server process is not required.
-
-Use the CI reporter set locally when you need to inspect the exact CI artifacts:
+Start the SUT, run Playwright, and then remove the Compose resources:
 
 ```bash
-pnpm --dir e2e test:ci
+docker compose -f compose.e2e.yml up --detach --build --wait
+BASE_URL=http://127.0.0.1:4173 pnpm --dir e2e test
+docker compose -f compose.e2e.yml down --volumes --remove-orphans
 ```
 
-Run `pnpm --dir e2e test:static` to type-check the configuration and suite without starting the server.
+Always run the final command, including after a failed test. Use `pnpm --dir e2e test:ci` for the CI reporters and `pnpm --dir e2e test:static` for a type check.
 
 ## Use the reusable workflow
 
-Consumer repositories keep their Playwright package in a root-level `e2e/` directory. Call the workflow from a job and pin it to the full commit SHA of a released version:
+Keep the Playwright package in `e2e/` and the Compose file at the repository root. Pin the reusable workflow to a full release commit SHA:
 
 ```yaml
 name: E2E
@@ -60,29 +62,93 @@ jobs:
     uses: codotech/playwright-e2e-ci-framework/.github/workflows/reusable-e2e.yml@<40-character-release-commit-sha>
     with:
       working-directory: e2e
+      compose-file: compose.e2e.yml
+      base-url: http://127.0.0.1:4173
       shard-count: 2
 ```
 
-Replace `<40-character-release-commit-sha>` with the immutable SHA published for the version you adopt. The workflow needs no inherited secrets and does not write pull-request comments.
+Replace the marker with the immutable SHA you adopt. The workflow needs no inherited secrets and does not write pull-request comments.
 
-The framework targets GitHub.com. It uses GitHub's `$/` self-repository references so the reusable workflow and its composite actions always come from the same commit; that syntax is not available on GitHub Enterprise Server.
+| Input | Default | Purpose |
+| --- | --- | --- |
+| `working-directory` | `e2e` | Playwright package location |
+| `playwright-config` | `playwright.config.ts` | Config path inside the package |
+| `compose-file` | `compose.e2e.yml` | Compose file relative to the repository root |
+| `base-url` | `http://127.0.0.1:4173` | URL Playwright uses after the SUT is healthy |
+| `projects` | empty | Project names, one per line; empty selects all |
+| `labels` | empty | Tags beginning with `@`, one per line; empty selects all |
+| `label-match` | `all` | Require all listed labels or any listed label |
+| `node-version` | `22` | Node.js runtime |
+| `pnpm-version` | `10.26.2` | pnpm runtime |
+| `shard-count` | `2` | Parallel shards, from 1 through 32 |
+| `artifact-retention-days` | `10` | Evidence retention period |
 
-The supported inputs are:
+The outputs are `verdict`, `artifact-name`, `total`, `passed`, `failed`, and `skipped`.
 
-| Input                     | Default                | Purpose                            |
-| ------------------------- | ---------------------- | ---------------------------------- |
-| `working-directory`       | `e2e`                  | Playwright package location        |
-| `node-version`            | `22`                   | Node.js runtime                    |
-| `pnpm-version`            | `10.26.2`              | pnpm runtime                       |
-| `playwright-config`       | `playwright.config.ts` | Config path inside the package     |
-| `shard-count`             | `2`                    | Parallel shards, from 1 through 32 |
-| `artifact-retention-days` | `10`                   | Evidence retention period          |
+## Select projects and labels
 
-The workflow exposes `verdict`, `artifact-name`, `total`, `passed`, `failed`, and `skipped` outputs.
+A [Playwright project](https://playwright.dev/docs/test-projects) is a configured execution variant, such as a browser, device, authentication state, or test group. Each `projects` line becomes an exact `--project` selection.
 
-## Read the evidence
+A framework `label` means a [Playwright tag](https://playwright.dev/docs/test-annotations#tag-tests), not a project. Every label must start with `@`; the workflow converts the labels into one `--grep` expression.
 
-Every shard uploads its raw status, blob report, CTRF result, and Playwright test results. The merge job verifies that all expected shards are present and publishes one `e2e-evidence` artifact:
+For example, a manual run can use multiline values:
+
+```text
+projects:
+api
+chromium
+
+labels:
+@smoke
+@browser
+
+label-match: all
+```
+
+The repository's pull-request and `main` push runs leave both filters empty. Only a manual run supplies the form values above.
+
+`all` requires a test to carry both `@smoke` and `@browser`. `any` accepts a test carrying either tag. Blank project or label lines are ignored, and leaving a field empty disables that filter.
+
+Projects and labels are independent. The selected tests are the intersection of both filters, and Playwright shards that result afterward:
+
+```text
+configured tests
+      |
+ selected projects
+      |
+ matching tags
+      |
+ shard 1 + shard 2
+```
+
+The same values can be supplied by another workflow with YAML block scalars:
+
+```yaml
+with:
+  projects: |
+    api
+    chromium
+  labels: |
+    @smoke
+    @browser
+  label-match: any
+```
+
+## SUT lifecycle in CI
+
+Each shard runs on its own runner and performs the full lifecycle:
+
+1. Validate the Compose file and base URL.
+2. Build and start the SUT with `docker compose up --detach --build --wait`.
+3. Run Playwright with `BASE_URL` set to the ready service.
+4. Capture startup, service, and teardown logs.
+5. Run `docker compose down --volumes --remove-orphans`, even after failure.
+
+A startup or cleanup failure is an infrastructure error. A Playwright failure remains the primary failure when log collection or cleanup also fails.
+
+## Evidence and gate
+
+Every shard uploads its status, Compose logs, blob report, CTRF result, and Playwright test results. The merged `e2e-evidence` artifact contains:
 
 ```text
 e2e-evidence/
@@ -92,18 +158,6 @@ e2e-evidence/
 +-- verdict.json
 ```
 
-The HTML report is for investigation. `verdict.json` is the machine-readable result. The Actions job summary shows the merged totals without requiring repository write permissions.
+`E2E Gate` fails for a failed or cancelled shard, unhealthy SUT lifecycle, missing evidence, report merge failure, artifact failure, or a non-passing verdict. Evidence publication cannot turn a failed run green.
 
-## Fail-closed behavior
-
-`E2E Gate` fails when any of these conditions occurs:
-
-- A Playwright shard fails or is cancelled.
-- A shard status or report is missing or duplicated.
-- Reports cannot be merged.
-- The evidence artifact cannot be published or downloaded.
-- The authoritative verdict is absent or does not say `passed`.
-
-Evidence publication runs after test failure, but publishing a report never turns a failed test run green.
-
-To verify these guarantees on a branch, intentionally break one echo assertion, interrupt the example server startup, or temporarily remove one shard upload. Each experiment must end with a red `E2E Gate` and retained evidence; revert the controlled change after verification.
+The framework targets GitHub.com and uses `$/` references so the reusable workflow and its composite actions come from the same commit. That syntax is not available on GitHub Enterprise Server.
