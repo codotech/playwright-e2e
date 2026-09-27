@@ -90,7 +90,7 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - name: Check out caller repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Prepare E2E environment
         uses: $/.github/actions/prepare-e2e
@@ -144,7 +144,7 @@ jobs:
       skipped: ${{ steps.merge.outputs.skipped }}
     steps:
       - name: Check out caller repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Prepare report tooling
         uses: $/.github/actions/prepare-e2e
