@@ -7,22 +7,28 @@ on:
       - main
   workflow_dispatch:
     inputs:
+      profile:
+        description: Execution profile from e2e/ci.yml.
+        required: true
+        default: regression
+        type: string
       projects:
-        description: Playwright project names, one per line; empty runs all projects.
+        description: Optional project override, one per line.
         required: false
         default: ""
         type: string
       labels:
-        description: Playwright tags beginning with @, one per line; empty runs all tags.
+        description: Optional label override, one per line.
         required: false
         default: ""
         type: string
       label-match:
-        description: Require all labels or any label.
+        description: Optional label matching override.
         required: false
-        default: all
+        default: profile
         type: choice
         options:
+          - profile
           - all
           - any
 
@@ -39,10 +45,12 @@ jobs:
     name: E2E pipeline
     uses: $/.github/workflows/reusable-e2e.yml
     with:
-      working-directory: e2e
-      compose-file: compose.e2e.yml
-      base-url: http://127.0.0.1:4173
+      config-file: e2e/ci.yml
+      profile: >-
+        ${{ github.event_name == 'pull_request' && 'pull-request' ||
+        github.event_name == 'push' && 'main' || inputs.profile }}
       projects: ${{ github.event_name == 'workflow_dispatch' && inputs.projects || '' }}
       labels: ${{ github.event_name == 'workflow_dispatch' && inputs.labels || '' }}
-      label-match: ${{ github.event_name == 'workflow_dispatch' && inputs.label-match || 'all' }}
-      shard-count: 2
+      label-match: >-
+        ${{ github.event_name == 'workflow_dispatch' && inputs.label-match != 'profile' &&
+        inputs.label-match || '' }}

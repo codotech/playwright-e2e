@@ -1,5 +1,5 @@
-name: Build E2E Runner
-description: Build the Playwright runner once and save a portable zstd-compressed Docker archive.
+name: Resolve E2E Runner
+description: Reuse or build the content-addressed Playwright runner archive.
 
 inputs:
   working-directory:
@@ -17,6 +17,13 @@ inputs:
     description: Repository-relative output path for the zstd-compressed Docker image archive.
     required: false
     default: .e2e-runner/playwright-e2e-runner.tar.zst
+  content-hash:
+    description: SHA-256 of the E2E source tree used as the cache identity.
+    required: true
+  reuse-archive:
+    description: Validate and reuse the archive already restored at archive-path.
+    required: false
+    default: "false"
 
 outputs:
   image-name:
@@ -28,6 +35,9 @@ outputs:
   archive-path:
     description: Absolute path to the portable .tar.zst Docker image archive.
     value: ${{ steps.build.outputs.archive-path }}
+  archive-sha256:
+    description: SHA-256 digest of the compressed Docker archive.
+    value: ${{ steps.build.outputs.archive-sha256 }}
 
 runs:
   using: composite
@@ -40,8 +50,25 @@ runs:
         E2E_DOCKERFILE: ${{ inputs.dockerfile }}
         E2E_RUNNER_IMAGE: ${{ inputs.image-name }}
         E2E_ARCHIVE_PATH: ${{ inputs.archive-path }}
+        E2E_CONTENT_HASH: ${{ inputs.content-hash }}
+        E2E_REUSE_ARCHIVE: ${{ inputs.reuse-archive }}
       run: |
         set -euo pipefail
+
+        if [[ "$E2E_REUSE_ARCHIVE" == "true" ]]; then
+          node "$GITHUB_ACTION_PATH/runner-archive.mjs" \
+            verify \
+            "$GITHUB_WORKSPACE" \
+            "$E2E_ARCHIVE_PATH" \
+            "$E2E_RUNNER_IMAGE" \
+            "$E2E_CONTENT_HASH" \
+            "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if [[ "$E2E_REUSE_ARCHIVE" != "false" ]]; then
+          echo "reuse-archive must be true or false" >&2
+          exit 1
+        fi
 
         eval "$(node "$GITHUB_ACTION_PATH/prepare-build.mjs" \
           "$GITHUB_WORKSPACE" \
@@ -66,8 +93,11 @@ runs:
           zstd -T0 -3 --force -o "$E2E_ABSOLUTE_ARCHIVE_PATH"
         test -s "$E2E_ABSOLUTE_ARCHIVE_PATH"
 
-        {
-          echo "image-name=$E2E_RUNNER_IMAGE"
-          echo "image-id=$image_id"
-          echo "archive-path=$E2E_ABSOLUTE_ARCHIVE_PATH"
-        } >> "$GITHUB_OUTPUT"
+        node "$GITHUB_ACTION_PATH/runner-archive.mjs" \
+          write \
+          "$GITHUB_WORKSPACE" \
+          "$E2E_ARCHIVE_PATH" \
+          "$E2E_RUNNER_IMAGE" \
+          "$E2E_CONTENT_HASH" \
+          "$GITHUB_OUTPUT" \
+          "$image_id"

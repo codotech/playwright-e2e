@@ -7,7 +7,8 @@ This repository proves the contract with a root Docker Compose service. The serv
 ```text
 pull request / main / manual
               |
-      build runner image once
+ resolve runner by E2E content hash
+       cache hit / build once
               |
        portable runner archive
               |
@@ -73,28 +74,59 @@ jobs:
   e2e:
     uses: codotech/playwright-e2e-ci-framework/.github/workflows/reusable-e2e.yml@<40-character-release-commit-sha>
     with:
-      working-directory: e2e
-      compose-file: compose.e2e.yml
-      base-url: http://127.0.0.1:4173
-      shard-count: 2
+      config-file: e2e/ci.yml
+      profile: pull-request
 ```
 
 Replace the marker with the immutable SHA you adopt. The workflow needs no inherited secrets. Pull-request comments use the explicitly granted permission shown above.
 
 | Input | Default | Purpose |
 | --- | --- | --- |
-| `working-directory` | `e2e` | Playwright package location |
-| `playwright-config` | `playwright.config.ts` | Config path inside the package |
-| `compose-file` | `compose.e2e.yml` | Compose file relative to the repository root |
-| `base-url` | `http://127.0.0.1:4173` | URL Playwright uses after the SUT is healthy |
-| `projects` | empty | Project names, one per line; empty selects all |
-| `labels` | empty | Tags beginning with `@`, one per line; empty selects all |
-| `label-match` | `all` | Require all listed labels or any listed label |
-| `shard-count` | `2` | Parallel shards, from 1 through 32 |
-| `artifact-retention-days` | `10` | Evidence retention period |
+| `config-file` | `e2e/ci.yml` | Execution manifest and runner directory |
+| `profile` | `pull-request` | Named selection and execution policy |
+| `projects` | empty | Optional project override, one per line |
+| `labels` | empty | Optional label override, one per line |
+| `label-match` | empty | Optional `all` or `any` override |
 | `comment-on-pr` | `true` | Update one E2E report comment on same-repository pull requests |
 
 The workflow exposes the verdict, merged test totals, and the exact names and IDs of its portable images. The image outputs are listed below.
+
+## Configure execution policy
+
+Keep CI policy in `e2e/ci.yml`:
+
+```yaml
+version: 1
+
+runner:
+  dockerfile: Dockerfile
+
+playwright:
+  config: playwright.config.ts
+
+sut:
+  composeFile: compose.e2e.yml
+  baseUrl: http://127.0.0.1:4173
+
+execution:
+  shards: 2
+  artifactRetentionDays: 10
+
+profiles:
+  pull-request:
+    projects: [api, chromium]
+    labels: ["@smoke"]
+    labelMatch: any
+
+  main:
+    projects: [api, chromium]
+    labels: []
+    labelMatch: all
+```
+
+The manifest defines which configured tests CI selects. `playwright.config.ts` remains the source of truth for what each Playwright project means: browser, device, test matching, dependencies, and runtime behavior. The plan fails before building anything when the manifest has unknown keys, invalid paths, an unknown profile, invalid labels, or unsafe values.
+
+The runner archive is cached by a SHA-256 of the committed and non-ignored runner inputs under `e2e/`. A service-only change reuses the identical runner archive but still rebuilds the SUT and runs E2E. A test, fixture, dependency, Playwright config, runner, Dockerfile, or Docker-ignore change produces a new runner image. A manifest-only policy change selects a different test plan without rebuilding identical runner bytes. A missing or evicted cache safely falls back to a build.
 
 ## Select projects and labels
 
@@ -102,9 +134,11 @@ A [Playwright project](https://playwright.dev/docs/test-projects) is a configure
 
 A framework `label` means a [Playwright tag](https://playwright.dev/docs/test-annotations#tag-tests), not a project. Every label must start with `@`; the workflow converts the labels into one `--grep` expression.
 
-For example, a manual run can use multiline values:
+For example, a manual run can select `regression` and optionally override it with multiline values:
 
 ```text
+profile: regression
+
 projects:
 api
 chromium
@@ -116,9 +150,9 @@ labels:
 label-match: all
 ```
 
-The repository's pull-request and `main` push runs leave both filters empty. Only a manual run supplies the form values above.
+Pull requests use the `pull-request` profile, pushes to `main` use the `main` profile, and manual runs choose a profile explicitly. Manual project, label, and match values override only the selected profile fields that are provided.
 
-`all` requires a test to carry both `@smoke` and `@browser`. `any` accepts a test carrying either tag. Blank project or label lines are ignored, and leaving a field empty disables that filter.
+`all` requires a test to carry both `@smoke` and `@browser`. `any` accepts a test carrying either tag. Blank lines are ignored. An empty manual field keeps the profile value; `labels: []` in a profile disables label filtering for that profile.
 
 Projects and labels are independent. The selected tests are the intersection of both filters, and Playwright shards that result afterward:
 
@@ -184,9 +218,12 @@ The workflow exposes these values:
 
 | Output | Meaning |
 | --- | --- |
-| `runner-image-name` | Commit-tagged runner image name |
+| `runner-image-name` | E2E-content-hash-tagged runner image name |
 | `runner-image-id` | Content-addressed local runner image ID |
 | `runner-image-artifact` | Runner archive artifact name |
+| `runner-cache-hit` | Whether the content-addressed runner archive was reused |
+| `runner-content-hash` | SHA-256 identity of the E2E runner inputs |
+| `profile` | Effective execution profile |
 | `report-image-name` | Run-tagged report image name; empty when unavailable |
 | `report-image-id` | Content-addressed local report image ID; empty when unavailable |
 | `report-image-artifact` | Report archive artifact name; empty when unavailable |
@@ -210,7 +247,7 @@ docker run --rm --init --ipc=host \
   "$RUNNER_IMAGE_ID"
 ```
 
-Append normal Playwright arguments, such as `--project=chromium --grep=@smoke`, after the image name.
+Append normal Playwright arguments, such as `--project=chromium --grep=@smoke`, after the image reference.
 
 Load and serve the merged report in the same way:
 
@@ -221,8 +258,8 @@ docker run --rm -p 8080:8080 "$REPORT_IMAGE_NAME"
 
 Open `http://127.0.0.1:8080`. The report image contains the complete merged HTML directory. Retained Playwright traces and other report attachments remain available from the report when the test produced them.
 
-These images are currently GitHub artifacts, not registry publications. Download and `docker load` the archives before use; artifact retention still applies, and the run-tagged image names are not remotely pullable.
+These images are currently GitHub artifacts, not registry publications. Download and `docker load` the archives before use; artifact retention still applies, and the local image names are not remotely pullable.
 
-For pull requests from the same repository, the workflow creates or updates one sticky `E2E confidence report` comment with the verdict, aggregate totals, active project and label filters, failure reason, and workflow evidence link. Grant `pull-requests: write` in the caller workflow, or set `comment-on-pr: false` when comments are not wanted. Comment publication is non-blocking and does not change the gate verdict.
+For pull requests from the same repository, the workflow creates or updates one sticky `E2E confidence report` comment with the verdict, selected profile, aggregate totals, active project and label filters, image identities, failure reason, and workflow evidence link. Grant `pull-requests: write` in the caller workflow, or set `comment-on-pr: false` when comments are not wanted. Comment publication is non-blocking and does not change the gate verdict.
 
 The framework targets GitHub.com and uses `$/` references so the reusable workflow and its composite actions come from the same commit. That syntax is not available on GitHub Enterprise Server.

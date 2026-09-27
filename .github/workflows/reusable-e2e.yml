@@ -3,51 +3,31 @@ name: Reusable E2E
 on:
   workflow_call:
     inputs:
-      working-directory:
-        description: Directory containing the Playwright package.
+      config-file:
+        description: Repository-relative E2E execution manifest.
         required: false
-        default: e2e
+        default: e2e/ci.yml
         type: string
-      playwright-config:
-        description: Playwright configuration path, relative to the working directory.
+      profile:
+        description: Named execution profile from the E2E manifest.
         required: false
-        default: playwright.config.ts
-        type: string
-      compose-file:
-        description: Docker Compose file for the SUT, relative to the repository root.
-        required: false
-        default: compose.e2e.yml
-        type: string
-      base-url:
-        description: Base URL exposed by the Dockerized SUT.
-        required: false
-        default: http://127.0.0.1:4173
+        default: pull-request
         type: string
       projects:
-        description: Newline-delimited Playwright project names; empty selects all projects.
+        description: Optional newline-delimited project override; empty uses the profile.
         required: false
         default: ""
         type: string
       labels:
-        description: Newline-delimited Playwright tags beginning with @; empty selects all tags.
+        description: Optional newline-delimited label override; empty uses the profile.
         required: false
         default: ""
         type: string
       label-match:
-        description: Label matching mode, either all or any.
+        description: Optional label matching override, either all or any.
         required: false
-        default: all
+        default: ""
         type: string
-      shard-count:
-        description: Number of Playwright shards to run in parallel (1-32).
-        required: false
-        default: 2
-        type: number
-      artifact-retention-days:
-        description: Number of days to retain shard and merged evidence artifacts.
-        required: false
-        default: 10
-        type: number
       comment-on-pr:
         description: Create or update one E2E report comment on same-repository pull requests.
         required: false
@@ -63,6 +43,15 @@ on:
       runner-image-artifact:
         description: Artifact containing the portable E2E runner Docker archive.
         value: ${{ jobs.build_runner.outputs.artifact-name }}
+      runner-cache-hit:
+        description: Whether the runner archive was restored by E2E content hash.
+        value: ${{ jobs.build_runner.outputs.cache-hit }}
+      runner-content-hash:
+        description: SHA-256 of the E2E runtime and build inputs used by the runner.
+        value: ${{ jobs.plan.outputs.runner-content-hash }}
+      profile:
+        description: Effective E2E execution profile.
+        value: ${{ jobs.plan.outputs.profile }}
       report-image-name:
         description: Local image reference for the packaged E2E HTML report.
         value: ${{ jobs.merge.outputs.report-image-name }}
@@ -100,23 +89,34 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
+      working-directory: ${{ steps.plan.outputs.working-directory }}
+      dockerfile: ${{ steps.plan.outputs.dockerfile }}
+      playwright-config: ${{ steps.plan.outputs.playwright-config }}
+      compose-file: ${{ steps.plan.outputs.compose-file }}
+      base-url: ${{ steps.plan.outputs.base-url }}
+      projects: ${{ steps.plan.outputs.projects }}
+      labels: ${{ steps.plan.outputs.labels }}
+      label-match: ${{ steps.plan.outputs.label-match }}
+      shard-count: ${{ steps.plan.outputs.shard-count }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      artifact-retention-days: ${{ steps.plan.outputs.artifact-retention-days }}
+      runner-content-hash: ${{ steps.plan.outputs.runner-content-hash }}
+      profile: ${{ steps.plan.outputs.profile }}
     steps:
-      - id: matrix
-        name: Validate and create shard matrix
-        env:
-          SHARD_COUNT: ${{ inputs.shard-count }}
-        shell: bash
-        run: |
-          matrix="$(node -e '
-            const count = Number(process.env.SHARD_COUNT);
-            if (!Number.isInteger(count) || count < 1 || count > 32) {
-              console.error("shard-count must be an integer from 1 through 32");
-              process.exit(1);
-            }
-            process.stdout.write(JSON.stringify({ shard: Array.from({ length: count }, (_, index) => index + 1) }));
-          ')"
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+      - name: Check out caller repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - id: plan
+        name: Validate E2E execution manifest
+        uses: $/.github/actions/plan-e2e
+        with:
+          config-file: ${{ inputs.config-file }}
+          profile: ${{ inputs.profile }}
+          projects: ${{ inputs.projects }}
+          labels: ${{ inputs.labels }}
+          label-match: ${{ inputs.label-match }}
 
   build_runner:
     name: Build E2E runner image
@@ -127,20 +127,31 @@ jobs:
       image-name: ${{ steps.build.outputs.image-name }}
       image-id: ${{ steps.build.outputs.image-id }}
       artifact-name: ${{ steps.upload-runner.outcome == 'success' && 'e2e-runner-image' || '' }}
+      cache-hit: ${{ steps.runner-cache.outcome == 'success' && steps.runner-cache.outputs.cache-hit == 'true' }}
     steps:
       - name: Check out caller repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
+      - id: runner-cache
+        name: Restore E2E runner archive
+        continue-on-error: true
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .e2e-runner
+          key: e2e-runner-v1-${{ runner.os }}-${{ runner.arch }}-${{ needs.plan.outputs.runner-content-hash }}
+
       - id: build
-        name: Build E2E runner image
+        name: Resolve E2E runner image
         uses: $/.github/actions/build-e2e-runner
         with:
-          working-directory: ${{ inputs.working-directory }}
-          dockerfile: Dockerfile
-          image-name: playwright-e2e-runner:${{ github.sha }}
+          working-directory: ${{ needs.plan.outputs.working-directory }}
+          dockerfile: ${{ needs.plan.outputs.dockerfile }}
+          image-name: playwright-e2e-runner:e2e-${{ needs.plan.outputs.runner-content-hash }}
           archive-path: .e2e-runner/playwright-e2e-runner.tar.zst
+          content-hash: ${{ needs.plan.outputs.runner-content-hash }}
+          reuse-archive: ${{ steps.runner-cache.outcome == 'success' && steps.runner-cache.outputs.cache-hit == 'true' }}
 
       - id: upload-runner
         name: Upload portable E2E runner image
@@ -150,10 +161,10 @@ jobs:
           path: ${{ steps.build.outputs.archive-path }}
           if-no-files-found: error
           compression-level: 0
-          retention-days: ${{ inputs.artifact-retention-days }}
+          retention-days: ${{ needs.plan.outputs.artifact-retention-days }}
 
   shards:
-    name: E2E shard ${{ matrix.shard }}/${{ inputs.shard-count }}
+    name: E2E shard ${{ matrix.shard }}/${{ needs.plan.outputs.shard-count }}
     needs:
       - plan
       - build_runner
@@ -187,19 +198,19 @@ jobs:
         continue-on-error: true
         uses: $/.github/actions/run-e2e
         with:
-          working-directory: ${{ inputs.working-directory }}
-          playwright-config: ${{ inputs.playwright-config }}
-          compose-file: ${{ inputs.compose-file }}
-          base-url: ${{ inputs.base-url }}
+          working-directory: ${{ needs.plan.outputs.working-directory }}
+          playwright-config: ${{ needs.plan.outputs.playwright-config }}
+          compose-file: ${{ needs.plan.outputs.compose-file }}
+          base-url: ${{ needs.plan.outputs.base-url }}
           runner-image-name: ${{ needs.build_runner.outputs.image-name }}
           runner-image-id: ${{ needs.build_runner.outputs.image-id }}
           runner-download-outcome: ${{ steps.download-runner.outcome }}
           runner-load-outcome: ${{ steps.load-runner.outcome }}
-          projects: ${{ inputs.projects }}
-          labels: ${{ inputs.labels }}
-          label-match: ${{ inputs.label-match }}
+          projects: ${{ needs.plan.outputs.projects }}
+          labels: ${{ needs.plan.outputs.labels }}
+          label-match: ${{ needs.plan.outputs.label-match }}
           shard-index: ${{ matrix.shard }}
-          shard-total: ${{ inputs.shard-count }}
+          shard-total: ${{ needs.plan.outputs.shard-count }}
           results-directory: test-results
 
       - name: Upload shard evidence
@@ -209,7 +220,7 @@ jobs:
           name: e2e-shard-${{ matrix.shard }}
           path: ${{ steps.run.outputs.shard-directory }}
           if-no-files-found: error
-          retention-days: ${{ inputs.artifact-retention-days }}
+          retention-days: ${{ needs.plan.outputs.artifact-retention-days }}
 
       - name: Preserve shard verdict
         if: >-
@@ -296,7 +307,7 @@ jobs:
         with:
           download-directory: downloaded-shards
           evidence-directory: e2e-evidence
-          expected-shards: ${{ inputs.shard-count }}
+          expected-shards: ${{ needs.plan.outputs.shard-count }}
           runner-image-id: ${{ needs.build_runner.outputs.image-id }}
 
       - id: package-report
@@ -309,7 +320,7 @@ jobs:
           image-name: playwright-e2e-report:${{ github.run_id }}-${{ github.run_attempt }}
           archive-directory: e2e-report-image
           artifact-name: e2e-report-image
-          retention-days: ${{ inputs.artifact-retention-days }}
+          retention-days: ${{ needs.plan.outputs.artifact-retention-days }}
 
       - id: publish
         name: Publish and enforce authoritative evidence
@@ -318,9 +329,9 @@ jobs:
         uses: $/.github/actions/publish-e2e-evidence
         with:
           evidence-directory: e2e-evidence
-          expected-shards: ${{ inputs.shard-count }}
+          expected-shards: ${{ needs.plan.outputs.shard-count }}
           artifact-name: e2e-evidence
-          retention-days: ${{ inputs.artifact-retention-days }}
+          retention-days: ${{ needs.plan.outputs.artifact-retention-days }}
           runner-download-outcome: ${{ steps.download-runner.outcome }}
           runner-load-outcome: ${{ steps.load-runner.outcome }}
           runner-verification-outcome: ${{ steps.verify-runner.outcome }}
@@ -368,6 +379,7 @@ jobs:
   pr_comment:
     name: E2E PR report
     needs:
+      - plan
       - build_runner
       - merge
       - e2e_gate
@@ -395,12 +407,14 @@ jobs:
           E2E_RUNNER_IMAGE_NAME: ${{ needs.build_runner.outputs.image-name }}
           E2E_RUNNER_IMAGE_ID: ${{ needs.build_runner.outputs.image-id }}
           E2E_RUNNER_IMAGE_ARTIFACT: ${{ needs.build_runner.outputs.artifact-name }}
+          E2E_RUNNER_CACHE_HIT: ${{ needs.build_runner.outputs.cache-hit }}
           E2E_REPORT_IMAGE_NAME: ${{ needs.merge.outputs.report-image-name }}
           E2E_REPORT_IMAGE_ID: ${{ needs.merge.outputs.report-image-id }}
           E2E_REPORT_IMAGE_ARTIFACT: ${{ needs.merge.outputs.report-image-artifact }}
-          E2E_PROJECTS: ${{ inputs.projects }}
-          E2E_LABELS: ${{ inputs.labels }}
-          E2E_LABEL_MATCH: ${{ inputs.label-match }}
+          E2E_PROFILE: ${{ needs.plan.outputs.profile }}
+          E2E_PROJECTS: ${{ needs.plan.outputs.projects }}
+          E2E_LABELS: ${{ needs.plan.outputs.labels }}
+          E2E_LABEL_MATCH: ${{ needs.plan.outputs.label-match }}
         with:
           script: |
             const marker = '<!-- playwright-e2e-ci-report -->';
@@ -428,6 +442,7 @@ jobs:
             const passedCount = clean(process.env.E2E_PASSED, 'unknown');
             const failedCount = clean(process.env.E2E_FAILED, 'unknown');
             const skippedCount = clean(process.env.E2E_SKIPPED, 'unknown');
+            const profile = clean(process.env.E2E_PROFILE, 'unknown');
             const projects = list(process.env.E2E_PROJECTS, 'All configured projects');
             const labels = list(process.env.E2E_LABELS, 'All labels');
             const labelMatch = clean(process.env.E2E_LABEL_MATCH, 'all');
@@ -435,6 +450,9 @@ jobs:
             const runnerImageName = clean(process.env.E2E_RUNNER_IMAGE_NAME, 'unavailable');
             const runnerImageId = clean(process.env.E2E_RUNNER_IMAGE_ID, 'unavailable');
             const runnerImageArtifact = clean(process.env.E2E_RUNNER_IMAGE_ARTIFACT, 'unavailable');
+            const runnerSource = runnerImageName === 'unavailable'
+              ? 'unavailable'
+              : clean(process.env.E2E_RUNNER_CACHE_HIT, '') === 'true' ? 'cache hit' : 'built';
             const reportImageName = clean(process.env.E2E_REPORT_IMAGE_NAME, 'unavailable');
             const reportImageId = clean(process.env.E2E_REPORT_IMAGE_ID, 'unavailable');
             const reportImageArtifact = clean(process.env.E2E_REPORT_IMAGE_ARTIFACT, 'unavailable');
@@ -448,10 +466,11 @@ jobs:
               '| --- | --- |',
               `| Gate | ${status} |`,
               `| Tests | ${cell(`${passedCount} passed · ${failedCount} failed · ${skippedCount} skipped · ${total} total`)} |`,
+              `| Profile | ${cell(`\`${profile}\``)} |`,
               `| Projects | ${cell(projects)} |`,
               `| Labels | ${cell(`${labels} · match ${labelMatch}`)} |`,
               '| SUT | Docker Compose, isolated per shard |',
-              `| Runner image | ${cell(`\`${runnerImageName}\` · \`${runnerImageId}\` · \`${runnerImageArtifact}\``)} |`,
+              `| Runner image | ${cell(`\`${runnerImageName}\` · \`${runnerImageId}\` · \`${runnerImageArtifact}\` · ${runnerSource}`)} |`,
               `| Report image | ${cell(`\`${reportImageName}\` · \`${reportImageId}\` · \`${reportImageArtifact}\``)} |`,
               `| Evidence | [Open workflow run](${runUrl}) · \`${cell(artifactName)}\` |`,
             ];

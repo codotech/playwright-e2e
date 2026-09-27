@@ -76,6 +76,7 @@ id_rsa.*
 id_ed25519
 id_ed25519.*
 
-# Build instructions are not runtime inputs
+# CI and build instructions are not runtime inputs
+ci.yml
 Dockerfile
 .dockerignore
