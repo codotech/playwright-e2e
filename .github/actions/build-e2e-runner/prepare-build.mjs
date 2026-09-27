@@ -5,7 +5,7 @@ import {
   realpathSync,
   rmSync,
 } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 const [
   workspace,
@@ -54,6 +54,9 @@ if (dockerfileRelativePath.startsWith("..") || isAbsolute(dockerfileRelativePath
 }
 
 const archivePath = resolve(workspacePath, requestedArchivePath);
+if (basename(archivePath) !== "playwright-e2e-runner.tar.zst") {
+  throw new Error("archive-path must end with playwright-e2e-runner.tar.zst");
+}
 const archiveRelativePath = relative(workspacePath, archivePath);
 if (archiveRelativePath.startsWith("..") || isAbsolute(archiveRelativePath)) {
   throw new Error("archive-path must remain inside GITHUB_WORKSPACE");
@@ -77,11 +80,13 @@ if (
 ) {
   throw new Error("archive-path must not traverse a symlink outside GITHUB_WORKSPACE");
 }
-if (existsSync(archivePath) && lstatSync(archivePath).isSymbolicLink()) {
-  throw new Error("archive-path must not be a symbolic link");
-}
 mkdirSync(dirname(archivePath), { recursive: true });
-rmSync(archivePath, { force: true });
+for (const outputPath of [archivePath, resolve(dirname(archivePath), "metadata.json")]) {
+  if (existsSync(outputPath) && lstatSync(outputPath).isDirectory()) {
+    throw new Error(`runner output path must not be a directory: ${outputPath}`);
+  }
+  rmSync(outputPath, { force: true });
+}
 
 const quoteForShell = (value) => `'${value.replaceAll("'", `'"'"'`)}'`;
 for (const [name, value] of Object.entries({

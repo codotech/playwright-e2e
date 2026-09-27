@@ -45,7 +45,6 @@ jobs:
     name: E2E pipeline
     uses: $/.github/workflows/reusable-e2e.yml
     with:
-      config-file: e2e/ci.yml
       profile: >-
         ${{ github.event_name == 'pull_request' && 'pull-request' ||
         github.event_name == 'push' && 'main' || inputs.profile }}

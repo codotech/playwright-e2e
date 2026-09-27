@@ -3,11 +3,6 @@ name: Reusable E2E
 on:
   workflow_call:
     inputs:
-      config-file:
-        description: Repository-relative E2E execution manifest.
-        required: false
-        default: e2e/ci.yml
-        type: string
       profile:
         description: Named execution profile from the E2E manifest.
         required: false
@@ -112,7 +107,6 @@ jobs:
         name: Validate E2E execution manifest
         uses: $/.github/actions/plan-e2e
         with:
-          config-file: ${{ inputs.config-file }}
           profile: ${{ inputs.profile }}
           projects: ${{ inputs.projects }}
           labels: ${{ inputs.labels }}
@@ -124,7 +118,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
-      group: e2e-runner-${{ needs.plan.outputs.runner-content-hash }}
+      group: e2e-runner-${{ github.event.pull_request.number || github.ref }}-${{ needs.plan.outputs.runner-content-hash }}
       cancel-in-progress: false
     outputs:
       image-name: ${{ steps.reuse.outputs.image-name || steps.build.outputs.image-name }}
@@ -148,6 +142,7 @@ jobs:
       - id: reuse
         name: Validate cached E2E runner image
         if: steps.runner-cache.outcome == 'success' && steps.runner-cache.outputs.cache-hit == 'true'
+        continue-on-error: true
         uses: $/.github/actions/validate-e2e-runner
         with:
           archive-path: .e2e-runner/playwright-e2e-runner.tar.zst
@@ -156,7 +151,9 @@ jobs:
 
       - id: build
         name: Build E2E runner image
-        if: steps.runner-cache.outcome != 'success' || steps.runner-cache.outputs.cache-hit != 'true'
+        if: >-
+          always() && !cancelled() && steps.runner-cache.outcome != 'skipped' &&
+          steps.reuse.outcome != 'success'
         uses: $/.github/actions/build-e2e-runner
         with:
           working-directory: ${{ needs.plan.outputs.working-directory }}

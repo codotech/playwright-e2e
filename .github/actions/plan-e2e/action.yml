@@ -2,10 +2,6 @@ name: Plan E2E
 description: Validate the E2E execution manifest and produce one deterministic CI plan.
 
 inputs:
-  config-file:
-    description: Repository-relative E2E execution manifest.
-    required: false
-    default: e2e/ci.yml
   profile:
     description: Named execution profile from the manifest.
     required: true
@@ -70,7 +66,6 @@ runs:
       name: Validate manifest and create plan
       shell: bash
       env:
-        E2E_CONFIG_FILE: ${{ inputs.config-file }}
         E2E_PROFILE: ${{ inputs.profile }}
         E2E_PROJECTS_OVERRIDE: ${{ inputs.projects }}
         E2E_LABELS_OVERRIDE: ${{ inputs.labels }}
@@ -79,7 +74,6 @@ runs:
         set -euo pipefail
         ruby "$GITHUB_ACTION_PATH/plan.rb" \
           "$GITHUB_WORKSPACE" \
-          "$E2E_CONFIG_FILE" \
           "$E2E_PROFILE" \
           "$E2E_PROJECTS_OVERRIDE" \
           "$E2E_LABELS_OVERRIDE" \

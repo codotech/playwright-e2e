@@ -6,7 +6,7 @@ require "securerandom"
 require "uri"
 require "yaml"
 
-workspace_argument, config_argument, profile_name, projects_override,
+workspace_argument, profile_name, projects_override,
   labels_override, label_match_override, output_file = ARGV
 
 def fail_plan(message)
@@ -84,15 +84,15 @@ def append_output(file, name, value)
 end
 
 workspace = Pathname.new(workspace_argument).realpath
-config_relative = require_relative_path(config_argument, "config-file")
+config_relative = "e2e/ci.yml"
 config_path = workspace.join(config_relative)
-fail_plan("config-file does not exist: #{config_relative}") unless config_path.file?
-fail_plan("config-file must not be a symbolic link") if config_path.symlink?
-fail_plan("config-file is too large") if config_path.size > 65_536
+fail_plan("e2e/ci.yml does not exist") unless config_path.file?
+fail_plan("e2e/ci.yml must not be a symbolic link") if config_path.symlink?
+fail_plan("e2e/ci.yml is too large") if config_path.size > 65_536
 
 resolved_config = config_path.realpath
 relative_config = resolved_config.relative_path_from(workspace).to_s
-fail_plan("config-file must remain inside GITHUB_WORKSPACE") if relative_config == ".." || relative_config.start_with?("../")
+fail_plan("e2e/ci.yml must remain inside GITHUB_WORKSPACE") if relative_config == ".." || relative_config.start_with?("../")
 
 manifest = YAML.safe_load(
   resolved_config.read,
@@ -159,7 +159,7 @@ end
 
 working_directory_path = resolved_config.dirname.realpath
 working_directory = working_directory_path.relative_path_from(workspace).to_s
-fail_plan("config-file must live below the repository root") if working_directory == "." || working_directory.start_with?("../")
+fail_plan("e2e/ci.yml must live below the repository root") if working_directory == "." || working_directory.start_with?("../")
 
 dockerfile_path = working_directory_path.join(dockerfile).cleanpath
 playwright_config_path = working_directory_path.join(playwright_config).cleanpath

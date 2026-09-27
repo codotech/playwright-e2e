@@ -7,10 +7,17 @@ This repository proves the contract with a root Docker Compose service. The serv
 ```text
 pull request / main / manual
               |
- resolve runner by E2E content hash
-       cache hit / build once
+    plan + hash runner inputs
               |
-       portable runner archive
+    serialize identical hashes
+              |
+       +------+------+
+       |             |
+ validated cache   cache miss
+       |         pure runner build
+       +------+------+
+              |
+    portable runner archive
               |
        +------+------+
        |             |
@@ -74,7 +81,6 @@ jobs:
   e2e:
     uses: codotech/playwright-e2e-ci-framework/.github/workflows/reusable-e2e.yml@<40-character-release-commit-sha>
     with:
-      config-file: e2e/ci.yml
       profile: pull-request
 ```
 
@@ -82,7 +88,6 @@ Replace the marker with the immutable SHA you adopt. The workflow needs no inher
 
 | Input | Default | Purpose |
 | --- | --- | --- |
-| `config-file` | `e2e/ci.yml` | Execution manifest and runner directory |
 | `profile` | `pull-request` | Named selection and execution policy |
 | `projects` | empty | Optional project override, one per line |
 | `labels` | empty | Optional label override, one per line |
@@ -94,6 +99,8 @@ The workflow exposes the verdict, merged test totals, and the exact names and ID
 ## Configure execution policy
 
 Keep CI policy in `e2e/ci.yml`:
+
+The manifest path is intentionally fixed to `e2e/ci.yml`, matching the runner build context exclusion and keeping execution-only policy outside the runner image.
 
 ```yaml
 version: 1
@@ -126,7 +133,25 @@ profiles:
 
 The manifest defines which configured tests CI selects. `playwright.config.ts` remains the source of truth for what each Playwright project means: browser, device, test matching, dependencies, and runtime behavior. The plan fails before building anything when the manifest has unknown keys, invalid paths, an unknown profile, invalid labels, or unsafe values.
 
-The runner archive is cached by a SHA-256 of the committed and non-ignored runner inputs under `e2e/`. A service-only change reuses the identical runner archive but still rebuilds the SUT and runs E2E. A test, fixture, dependency, Playwright config, runner, Dockerfile, or Docker-ignore change produces a new runner image. A manifest-only policy change selects a different test plan without rebuilding identical runner bytes. A missing or evicted cache safely falls back to a build.
+## Reuse identical runner images
+
+The runner cache key is:
+
+```text
+e2e-runner-v1-<runner OS>-<runner architecture>-<runner content hash>
+```
+
+The content hash covers the normalized `runner.dockerfile` selection plus every Git-tracked or non-ignored untracked file under the E2E directory, except the execution manifest itself. Paths, file types, Unix modes, file bytes, and symlink targets contribute to the hash.
+
+The identity is deliberately conservative around runner inputs:
+
+- A test, fixture, dependency, Playwright configuration file, runner entrypoint, Dockerfile, Docker-ignore rule, or selected runner Dockerfile change creates a new identity.
+- Profiles, project and label selection, Playwright config selection, shard count, retention, and SUT policy remain outside the runner identity. They can change what runs without rebuilding identical image bytes; the selected config file's contents are still covered by the E2E tree hash.
+- A service-only change reuses the runner but still rebuilds the SUT and runs the E2E suite.
+
+The workflow owns cache reuse. On an exact cache hit, a separate validation action checks the metadata content hash, image reference and ID, archive name, byte size, and SHA-256 before reuse. `runner-cache-hit` is `true` only after that validation succeeds. A missing, evicted, unavailable, or invalid cache runs the build action, which removes stale output files, performs a fresh Docker build, and writes a new archive plus metadata; it contains no cache-reuse branch. Invalid cached bytes are never trusted.
+
+Runner resolution uses the concurrency group `e2e-runner-<pull request or ref>-<runner content hash>` with cancellation disabled. Identical runner requests in the same change stream resolve one at a time, while unrelated pull requests cannot cancel each other's pending runner job. Different content hashes resolve independently. Every run still uploads its resolved archive as `e2e-runner-image`, so shards consume a run-scoped artifact rather than the shared cache directly.
 
 ## Select projects and labels
 
