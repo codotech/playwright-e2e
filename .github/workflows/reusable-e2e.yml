@@ -119,15 +119,18 @@ jobs:
           label-match: ${{ inputs.label-match }}
 
   build_runner:
-    name: Build E2E runner image
+    name: Resolve E2E runner image
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    concurrency:
+      group: e2e-runner-${{ needs.plan.outputs.runner-content-hash }}
+      cancel-in-progress: false
     outputs:
-      image-name: ${{ steps.build.outputs.image-name }}
-      image-id: ${{ steps.build.outputs.image-id }}
+      image-name: ${{ steps.reuse.outputs.image-name || steps.build.outputs.image-name }}
+      image-id: ${{ steps.reuse.outputs.image-id || steps.build.outputs.image-id }}
       artifact-name: ${{ steps.upload-runner.outcome == 'success' && 'e2e-runner-image' || '' }}
-      cache-hit: ${{ steps.runner-cache.outcome == 'success' && steps.runner-cache.outputs.cache-hit == 'true' }}
+      cache-hit: ${{ steps.reuse.outcome == 'success' }}
     steps:
       - name: Check out caller repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -142,8 +145,18 @@ jobs:
           path: .e2e-runner
           key: e2e-runner-v1-${{ runner.os }}-${{ runner.arch }}-${{ needs.plan.outputs.runner-content-hash }}
 
+      - id: reuse
+        name: Validate cached E2E runner image
+        if: steps.runner-cache.outcome == 'success' && steps.runner-cache.outputs.cache-hit == 'true'
+        uses: $/.github/actions/validate-e2e-runner
+        with:
+          archive-path: .e2e-runner/playwright-e2e-runner.tar.zst
+          image-name: playwright-e2e-runner:e2e-${{ needs.plan.outputs.runner-content-hash }}
+          content-hash: ${{ needs.plan.outputs.runner-content-hash }}
+
       - id: build
-        name: Resolve E2E runner image
+        name: Build E2E runner image
+        if: steps.runner-cache.outcome != 'success' || steps.runner-cache.outputs.cache-hit != 'true'
         uses: $/.github/actions/build-e2e-runner
         with:
           working-directory: ${{ needs.plan.outputs.working-directory }}
@@ -151,14 +164,13 @@ jobs:
           image-name: playwright-e2e-runner:e2e-${{ needs.plan.outputs.runner-content-hash }}
           archive-path: .e2e-runner/playwright-e2e-runner.tar.zst
           content-hash: ${{ needs.plan.outputs.runner-content-hash }}
-          reuse-archive: ${{ steps.runner-cache.outcome == 'success' && steps.runner-cache.outputs.cache-hit == 'true' }}
 
       - id: upload-runner
         name: Upload portable E2E runner image
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: e2e-runner-image
-          path: ${{ steps.build.outputs.archive-path }}
+          path: ${{ steps.reuse.outputs.archive-path || steps.build.outputs.archive-path }}
           if-no-files-found: error
           compression-level: 0
           retention-days: ${{ needs.plan.outputs.artifact-retention-days }}

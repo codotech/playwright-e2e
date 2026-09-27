@@ -1,0 +1,47 @@
+name: Validate E2E Runner Archive
+description: Validate a cached runner archive and expose its immutable identity.
+
+inputs:
+  archive-path:
+    description: Repository-relative cached Docker archive path.
+    required: false
+    default: .e2e-runner/playwright-e2e-runner.tar.zst
+  image-name:
+    description: Expected content-addressed local image reference.
+    required: true
+  content-hash:
+    description: Expected SHA-256 identity of the E2E runner inputs.
+    required: true
+
+outputs:
+  image-name:
+    description: Local Docker image reference stored in the archive.
+    value: ${{ steps.validate.outputs.image-name }}
+  image-id:
+    description: Content-addressed Docker image ID stored in metadata.
+    value: ${{ steps.validate.outputs.image-id }}
+  archive-path:
+    description: Absolute path to the validated archive.
+    value: ${{ steps.validate.outputs.archive-path }}
+  archive-sha256:
+    description: Verified SHA-256 digest of the compressed archive.
+    value: ${{ steps.validate.outputs.archive-sha256 }}
+
+runs:
+  using: composite
+  steps:
+    - id: validate
+      name: Validate cached runner archive
+      shell: bash
+      env:
+        E2E_ARCHIVE_PATH: ${{ inputs.archive-path }}
+        E2E_RUNNER_IMAGE: ${{ inputs.image-name }}
+        E2E_CONTENT_HASH: ${{ inputs.content-hash }}
+      run: |
+        set -euo pipefail
+        node "$GITHUB_ACTION_PATH/validate-archive.mjs" \
+          "$GITHUB_WORKSPACE" \
+          "$E2E_ARCHIVE_PATH" \
+          "$E2E_RUNNER_IMAGE" \
+          "$E2E_CONTENT_HASH" \
+          "$GITHUB_OUTPUT"

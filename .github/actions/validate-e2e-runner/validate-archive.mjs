@@ -3,9 +3,9 @@ import {
   createReadStream,
   existsSync,
   lstatSync,
+  readFileSync,
   realpathSync,
   statSync,
-  writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -16,7 +16,6 @@ const [
   expectedImageName,
   expectedContentHash,
   outputFile,
-  imageId,
 ] = process.argv.slice(2);
 
 const fail = (message) => {
@@ -54,15 +53,6 @@ if (lstatSync(archivePath).isSymbolicLink()) {
   fail("runner archive must not be a symbolic link");
 }
 
-const digestFile = async (path) => {
-  const hash = createHash("sha256");
-  const stream = createReadStream(path);
-  for await (const chunk of stream) hash.update(chunk);
-  return hash.digest("hex");
-};
-
-const archiveDigest = await digestFile(archivePath);
-const archiveSize = statSync(archivePath).size;
 const archiveDirectory = realpathSync(dirname(archivePath));
 const relativeArchiveDirectory = relative(workspacePath, archiveDirectory);
 if (
@@ -73,28 +63,36 @@ if (
   fail("runner archive directory must remain inside GITHUB_WORKSPACE");
 }
 const metadataPath = resolve(archiveDirectory, "metadata.json");
-if (existsSync(metadataPath) && lstatSync(metadataPath).isSymbolicLink()) {
-  fail("runner metadata must not be a symbolic link");
+if (!existsSync(metadataPath) || !lstatSync(metadataPath).isFile()) {
+  fail("cached runner metadata.json is missing");
+}
+if (lstatSync(metadataPath).isSymbolicLink()) {
+  fail("cached runner metadata must not be a symbolic link");
 }
 
-if (!/^sha256:[a-f0-9]{64}$/.test(imageId ?? "")) {
-  fail("image-id must be a content-addressed Docker image ID");
-}
-
-const metadata = {
-  schemaVersion: 1,
-  contentHash: expectedContentHash,
-  imageName: expectedImageName,
-  imageId,
-  archive: {
-    file: "playwright-e2e-runner.tar.zst",
-    sha256: archiveDigest,
-    size: archiveSize,
-  },
+const digestFile = async (path) => {
+  const hash = createHash("sha256");
+  const stream = createReadStream(path);
+  for await (const chunk of stream) hash.update(chunk);
+  return hash.digest("hex");
 };
-writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, {
-  mode: 0o600,
-});
+
+let metadata;
+try {
+  metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+} catch (error) {
+  fail(`cached runner metadata is invalid JSON: ${error.message}`);
+}
+
+const archiveDigest = await digestFile(archivePath);
+const archiveSize = statSync(archivePath).size;
+if (metadata.schemaVersion !== 1) fail("unsupported runner metadata schema");
+if (metadata.contentHash !== expectedContentHash) fail("cached runner content hash does not match");
+if (metadata.imageName !== expectedImageName) fail("cached runner image name does not match");
+if (!/^sha256:[a-f0-9]{64}$/.test(metadata.imageId ?? "")) fail("cached runner image ID is invalid");
+if (metadata.archive?.file !== "playwright-e2e-runner.tar.zst") fail("cached runner archive name is invalid");
+if (metadata.archive?.sha256 !== archiveDigest) fail("cached runner archive digest does not match");
+if (metadata.archive?.size !== archiveSize) fail("cached runner archive size does not match");
 
 for (const [name, value] of [
   ["image-name", metadata.imageName],

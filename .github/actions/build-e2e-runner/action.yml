@@ -1,5 +1,5 @@
-name: Resolve E2E Runner
-description: Reuse or build the content-addressed Playwright runner archive.
+name: Build E2E Runner
+description: Build and archive a content-addressed Playwright runner image.
 
 inputs:
   working-directory:
@@ -20,10 +20,6 @@ inputs:
   content-hash:
     description: SHA-256 of the E2E source tree used as the cache identity.
     required: true
-  reuse-archive:
-    description: Validate and reuse the archive already restored at archive-path.
-    required: false
-    default: "false"
 
 outputs:
   image-name:
@@ -51,24 +47,8 @@ runs:
         E2E_RUNNER_IMAGE: ${{ inputs.image-name }}
         E2E_ARCHIVE_PATH: ${{ inputs.archive-path }}
         E2E_CONTENT_HASH: ${{ inputs.content-hash }}
-        E2E_REUSE_ARCHIVE: ${{ inputs.reuse-archive }}
       run: |
         set -euo pipefail
-
-        if [[ "$E2E_REUSE_ARCHIVE" == "true" ]]; then
-          node "$GITHUB_ACTION_PATH/runner-archive.mjs" \
-            verify \
-            "$GITHUB_WORKSPACE" \
-            "$E2E_ARCHIVE_PATH" \
-            "$E2E_RUNNER_IMAGE" \
-            "$E2E_CONTENT_HASH" \
-            "$GITHUB_OUTPUT"
-          exit 0
-        fi
-        if [[ "$E2E_REUSE_ARCHIVE" != "false" ]]; then
-          echo "reuse-archive must be true or false" >&2
-          exit 1
-        fi
 
         eval "$(node "$GITHUB_ACTION_PATH/prepare-build.mjs" \
           "$GITHUB_WORKSPACE" \
@@ -94,7 +74,6 @@ runs:
         test -s "$E2E_ABSOLUTE_ARCHIVE_PATH"
 
         node "$GITHUB_ACTION_PATH/runner-archive.mjs" \
-          write \
           "$GITHUB_WORKSPACE" \
           "$E2E_ARCHIVE_PATH" \
           "$E2E_RUNNER_IMAGE" \

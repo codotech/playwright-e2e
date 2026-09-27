@@ -193,6 +193,10 @@ files.reject! { |relative_file| relative_file == relative_config }
 fail_plan("E2E directory contains no source files") if files.empty?
 
 digest = Digest::SHA256.new
+digest.update("e2e-runner-content-v1\0")
+digest.update("runner.dockerfile\0")
+digest.update(dockerfile)
+digest.update("\0")
 files.each do |relative_file|
   path = workspace.join(relative_file)
   digest.update(relative_file)
