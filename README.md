@@ -4,29 +4,7 @@ A portable GitHub Action and lightweight framework for running Playwright agains
 
 It keeps the application repository in control of its tests and services while providing a consistent CI engine: deterministic runner images, smart reuse, SUT lifecycle management, test filtering, Playwright reports, traces, portable artifacts, and a fail-closed result.
 
-```text
-pull request / main / manual
-              |
-      validate e2e/ci.yml
-              |
-      hash E2E runner inputs
-              |
-       +------+------+
-       |             |
- validated cache   cache miss
-       |          build runner
-       +------+------+
-              |
-      start Dockerized SUT
-              |
-     Playwright projects + tags
-              |
-       results + traces
-              |
-     HTML report + report image
-              |
-          E2E Gate
-```
+![E2E delivery flow from pull request, main, or manual trigger through runner reuse, Dockerized SUT testing, reports, and the required gate](docs/diagrams/e2e-flow.svg)
 
 ## Start from the template
 
@@ -86,19 +64,7 @@ The action fails at the end when tests fail or infrastructure is incomplete. A c
 
 The caller keeps these files:
 
-```text
-.
-+-- compose.e2e.yml
-+-- e2e/
-|   +-- ci.yml
-|   +-- Dockerfile
-|   +-- runner-entrypoint.mjs
-|   +-- package.json
-|   +-- pnpm-lock.yaml
-|   +-- playwright.config.ts
-|   +-- tests/
-+-- sut/                         # example only; use your real services
-```
+![Repository contract showing the root Compose file, E2E configuration and tests, and replaceable system services](docs/diagrams/repository-contract.svg)
 
 `e2e/ci.yml` is the CI contract:
 
