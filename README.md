@@ -47,12 +47,12 @@ steps:
   - uses: actions/checkout@v7
 
   - id: e2e
-    uses: codotech/playwright-e2e@main
+    uses: codotech/playwright-e2e@v0
     with:
       profile: pull-request
 ```
 
-There is intentionally no release tag yet, so the starter follows `main`. Replace it with `@v1` when the first major version is published.
+`@v0` follows the latest compatible 0.x release. Pin `@v0.2.0` instead when an exact release is required.
 
 ### Inputs
 
