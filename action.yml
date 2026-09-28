@@ -1,0 +1,246 @@
+name: Playwright E2E
+author: Codotech
+description: Run a Dockerized system under test with a portable Playwright runner and publish the test results.
+
+branding:
+  icon: check-circle
+  color: green
+
+inputs:
+  profile:
+    description: Named execution profile from e2e/ci.yml.
+    required: false
+    default: pull-request
+  projects:
+    description: Optional newline-delimited Playwright project override.
+    required: false
+    default: ""
+  labels:
+    description: Optional newline-delimited Playwright tag override.
+    required: false
+    default: ""
+  label-match:
+    description: Optional label matching override, either all or any.
+    required: false
+    default: ""
+
+outputs:
+  result:
+    description: "Final result: passed, failed, or infrastructure-error."
+    value: ${{ steps.finalize.outputs.result }}
+  primary-failure:
+    description: Primary failure message, empty when the run passed.
+    value: ${{ steps.finalize.outputs.primary-failure }}
+  total:
+    description: Total number of tests.
+    value: ${{ steps.publish.outputs.total }}
+  passed:
+    description: Number of passing tests.
+    value: ${{ steps.publish.outputs.passed }}
+  failed:
+    description: Number of failing tests.
+    value: ${{ steps.publish.outputs.failed }}
+  skipped:
+    description: Number of skipped tests.
+    value: ${{ steps.publish.outputs.skipped }}
+  profile:
+    description: Effective execution profile.
+    value: ${{ steps.plan.outputs.profile }}
+  projects:
+    description: Effective newline-delimited Playwright projects.
+    value: ${{ steps.plan.outputs.projects }}
+  labels:
+    description: Effective newline-delimited Playwright tags.
+    value: ${{ steps.plan.outputs.labels }}
+  label-match:
+    description: Effective label matching mode.
+    value: ${{ steps.plan.outputs.label-match }}
+  runner-cache-hit:
+    description: Whether a validated runner archive was reused.
+    value: ${{ steps.reuse.outcome == 'success' }}
+  runner-content-hash:
+    description: SHA-256 identity of the runner inputs.
+    value: ${{ steps.plan.outputs.runner-content-hash }}
+  runner-image-name:
+    description: Content-hash-tagged runner image name.
+    value: ${{ steps.reuse.outputs.image-name || steps.build.outputs.image-name }}
+  runner-image-id:
+    description: Content-addressed runner image ID.
+    value: ${{ steps.reuse.outputs.image-id || steps.build.outputs.image-id }}
+  runner-image-artifact:
+    description: Artifact containing the portable runner image.
+    value: ${{ steps.upload-runner.outcome == 'success' && 'e2e-runner-image' || '' }}
+  results-directory:
+    description: Absolute directory containing merged test results.
+    value: ${{ steps.merge.outputs.results-directory }}
+  results-artifact:
+    description: Artifact containing merged test results.
+    value: ${{ steps.publish.outputs.artifact-name }}
+  report-directory:
+    description: Absolute directory containing the Playwright HTML report.
+    value: ${{ steps.merge.outputs.report-directory }}
+  report-image-name:
+    description: Run-tagged report image name.
+    value: ${{ steps.package-report.outputs.image-name }}
+  report-image-id:
+    description: Content-addressed report image ID.
+    value: ${{ steps.package-report.outputs.image-id }}
+  report-image-artifact:
+    description: Artifact containing the portable report image.
+    value: ${{ steps.package-report.outputs.artifact-name }}
+
+runs:
+  using: composite
+  steps:
+    - id: plan
+      name: Validate E2E configuration
+      uses: $/.github/actions/plan-e2e
+      with:
+        profile: ${{ inputs.profile }}
+        projects: ${{ inputs.projects }}
+        labels: ${{ inputs.labels }}
+        label-match: ${{ inputs.label-match }}
+
+    - name: Require single-job execution
+      if: steps.plan.outputs.shard-count != '1'
+      shell: bash
+      run: |
+        echo "execution.shards must be 1 when using the root action" >&2
+        exit 1
+
+    - id: runner-cache
+      name: Restore E2E runner archive
+      continue-on-error: true
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .e2e-runner
+        key: e2e-runner-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.plan.outputs.runner-content-hash }}
+
+    - id: reuse
+      name: Validate cached E2E runner image
+      if: steps.runner-cache.outcome == 'success' && steps.runner-cache.outputs.cache-hit == 'true'
+      continue-on-error: true
+      uses: $/.github/actions/validate-e2e-runner
+      with:
+        archive-path: .e2e-runner/playwright-e2e-runner.tar.zst
+        image-name: playwright-e2e-runner:e2e-${{ steps.plan.outputs.runner-content-hash }}
+        content-hash: ${{ steps.plan.outputs.runner-content-hash }}
+
+    - id: build
+      name: Build E2E runner image
+      if: >-
+        always() && !cancelled() && steps.runner-cache.outcome != 'skipped' &&
+        steps.reuse.outcome != 'success'
+      uses: $/.github/actions/build-e2e-runner
+      with:
+        working-directory: ${{ steps.plan.outputs.working-directory }}
+        dockerfile: ${{ steps.plan.outputs.dockerfile }}
+        image-name: playwright-e2e-runner:e2e-${{ steps.plan.outputs.runner-content-hash }}
+        archive-path: .e2e-runner/playwright-e2e-runner.tar.zst
+        content-hash: ${{ steps.plan.outputs.runner-content-hash }}
+
+    - id: upload-runner
+      name: Upload portable E2E runner image
+      if: always() && (steps.reuse.outcome == 'success' || steps.build.outcome == 'success')
+      continue-on-error: true
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: e2e-runner-image
+        path: ${{ steps.reuse.outputs.archive-path || steps.build.outputs.archive-path }}
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: ${{ steps.plan.outputs.artifact-retention-days }}
+
+    - id: load-runner
+      name: Load E2E runner image
+      if: always() && (steps.reuse.outcome == 'success' || steps.build.outcome == 'success')
+      continue-on-error: true
+      shell: bash
+      run: docker load --input "${{ steps.reuse.outputs.archive-path || steps.build.outputs.archive-path }}"
+
+    - id: verify-runner
+      name: Verify immutable E2E runner image
+      if: always() && steps.load-runner.outcome == 'success'
+      continue-on-error: true
+      shell: bash
+      env:
+        E2E_RUNNER_IMAGE_NAME: ${{ steps.reuse.outputs.image-name || steps.build.outputs.image-name }}
+        E2E_RUNNER_IMAGE_ID: ${{ steps.reuse.outputs.image-id || steps.build.outputs.image-id }}
+      run: |
+        set -euo pipefail
+        actual_id="$(docker image inspect --format '{{.Id}}' "$E2E_RUNNER_IMAGE_NAME")"
+        if [[ "$actual_id" != "$E2E_RUNNER_IMAGE_ID" ]]; then
+          echo "Loaded runner image ID $actual_id does not match $E2E_RUNNER_IMAGE_ID" >&2
+          exit 1
+        fi
+
+    - id: run
+      name: Run Playwright E2E
+      if: always() && steps.plan.outcome == 'success'
+      continue-on-error: true
+      uses: $/.github/actions/run-e2e
+      with:
+        working-directory: ${{ steps.plan.outputs.working-directory }}
+        playwright-config: ${{ steps.plan.outputs.playwright-config }}
+        compose-file: ${{ steps.plan.outputs.compose-file }}
+        base-url: ${{ steps.plan.outputs.base-url }}
+        runner-image-name: ${{ steps.reuse.outputs.image-name || steps.build.outputs.image-name }}
+        runner-image-id: ${{ steps.reuse.outputs.image-id || steps.build.outputs.image-id }}
+        runner-download-outcome: ${{ (steps.reuse.outcome == 'success' || steps.build.outcome == 'success') && 'success' || 'failure' }}
+        runner-load-outcome: ${{ steps.load-runner.outcome }}
+        projects: ${{ steps.plan.outputs.projects }}
+        labels: ${{ steps.plan.outputs.labels }}
+        label-match: ${{ steps.plan.outputs.label-match }}
+        shard-index: "1"
+        shard-total: "1"
+        results-directory: test-results
+
+    - id: merge
+      name: Merge E2E results
+      if: always() && steps.plan.outcome == 'success'
+      continue-on-error: true
+      uses: $/.github/actions/merge-e2e-results
+      with:
+        download-directory: ${{ steps.plan.outputs.working-directory }}/test-results
+        results-directory: e2e-results
+        expected-shards: "1"
+        runner-image-id: ${{ steps.reuse.outputs.image-id || steps.build.outputs.image-id }}
+
+    - id: package-report
+      name: Package E2E report image
+      if: always() && steps.merge.outcome == 'success'
+      continue-on-error: true
+      uses: $/.github/actions/package-e2e-report
+      with:
+        report-directory: e2e-results/playwright-report
+        image-name: playwright-e2e-report:${{ github.run_id }}-${{ github.run_attempt }}
+        archive-directory: e2e-report-image
+        artifact-name: e2e-report-image
+        retention-days: ${{ steps.plan.outputs.artifact-retention-days }}
+
+    - id: publish
+      name: Publish E2E results
+      if: always() && steps.plan.outcome == 'success'
+      continue-on-error: true
+      uses: $/.github/actions/publish-e2e-results
+      with:
+        results-directory: e2e-results
+        expected-shards: "1"
+        artifact-name: e2e-results
+        retention-days: ${{ steps.plan.outputs.artifact-retention-days }}
+        runner-download-outcome: ${{ (steps.reuse.outcome == 'success' || steps.build.outcome == 'success') && 'success' || 'failure' }}
+        runner-load-outcome: ${{ steps.load-runner.outcome }}
+        runner-verification-outcome: ${{ steps.verify-runner.outcome }}
+        shard-download-outcome: ${{ steps.run.outputs.shard-directory != '' && 'success' || 'failure' }}
+        merge-outcome: ${{ steps.merge.outcome }}
+        report-publication-outcome: ${{ steps.package-report.outcome }}
+
+    - id: finalize
+      name: Enforce final E2E result
+      if: always()
+      uses: $/.github/actions/finalize-e2e-result
+      with:
+        result-file: ${{ steps.publish.outputs.result-file || 'e2e-results/result.json' }}
+        shard-job-result: ${{ steps.run.outcome }}
+        merge-job-result: ${{ (steps.merge.outcome == 'success' && steps.publish.outcome == 'success') && 'success' || 'failure' }}
+        publication-result: ${{ steps.upload-runner.outcome }}

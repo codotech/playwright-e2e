@@ -11,7 +11,7 @@ sut:
   baseUrl: http://127.0.0.1:4173
 
 execution:
-  shards: 2
+  shards: 1
   artifactRetentionDays: 10
 
 profiles:

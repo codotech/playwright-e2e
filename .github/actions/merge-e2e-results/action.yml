@@ -18,6 +18,12 @@ inputs:
     required: true
 
 outputs:
+  results-directory:
+    description: Absolute directory containing merged E2E results.
+    value: ${{ steps.stage.outputs.results-directory }}
+  report-directory:
+    description: Absolute directory containing the merged Playwright HTML report.
+    value: ${{ steps.stage.outputs.html-directory }}
   result:
     description: "Final result: passed, failed, or infrastructure-error."
     value: ${{ steps.assemble.outputs.result }}
