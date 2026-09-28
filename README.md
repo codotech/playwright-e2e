@@ -36,7 +36,7 @@ The template owns repository policy: triggers, permissions, concurrency, checkou
 
 ## Use the action
 
-Check out the caller repository first, then invoke the root action. Pin it to a full commit SHA:
+Check out the caller repository first, then invoke the root action. Use major-version references for released actions:
 
 ```yaml
 permissions:
@@ -44,15 +44,15 @@ permissions:
   pull-requests: write
 
 steps:
-  - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+  - uses: actions/checkout@v7
 
   - id: e2e
-    uses: codotech/playwright-e2e@<40-character-commit-sha>
+    uses: codotech/playwright-e2e@main
     with:
       profile: pull-request
 ```
 
-There is intentionally no release tag yet. Adopt an immutable commit only after reviewing it; the starter contains a working pinned example.
+There is intentionally no release tag yet, so the starter follows `main`. Replace it with `@v1` when the first major version is published.
 
 ### Inputs
 
