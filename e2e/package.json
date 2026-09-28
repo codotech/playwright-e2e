@@ -2,6 +2,7 @@
   "name": "@codotech/playwright-e2e-demo",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Self-contained demonstration suite for the Playwright E2E CI framework",
   "type": "module",
   "packageManager": "pnpm@10.26.2",

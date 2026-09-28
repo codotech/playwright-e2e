@@ -169,4 +169,4 @@ No inherited secrets are required by the action. The SUT may use repository or e
 
 ## License
 
-[Apache-2.0](LICENSE)
+[MIT](LICENSE)
