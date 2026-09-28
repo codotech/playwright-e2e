@@ -44,7 +44,7 @@ permissions:
   pull-requests: write
 
 steps:
-  - uses: actions/checkout@de0fac2e4500dabe0009e912b2c3a1b1f917ef8b
+  - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
   - id: e2e
     uses: codotech/playwright-e2e@<40-character-commit-sha>
