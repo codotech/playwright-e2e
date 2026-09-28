@@ -1,0 +1,116 @@
+name: Publish E2E Results
+description: Finalize, publish, summarize, and enforce the final E2E result.
+
+inputs:
+  results-directory:
+    description: Repository-relative directory containing merged E2E results.
+    required: false
+    default: e2e-results
+  expected-shards:
+    description: Number of shard results required by the run.
+    required: true
+  artifact-name:
+    description: Name of the durable merged results artifact.
+    required: false
+    default: e2e-results
+  retention-days:
+    description: Number of days GitHub retains the merged results artifact.
+    required: false
+    default: "10"
+  runner-download-outcome:
+    description: Outcome of downloading the immutable runner archive.
+    required: true
+  runner-load-outcome:
+    description: Outcome of loading the immutable runner archive.
+    required: true
+  runner-verification-outcome:
+    description: Outcome of verifying the loaded runner image ID.
+    required: true
+  shard-download-outcome:
+    description: Outcome of downloading shard results.
+    required: true
+  merge-outcome:
+    description: Outcome of deterministic results assembly.
+    required: true
+  report-publication-outcome:
+    description: Outcome of building and publishing the report image archive.
+    required: true
+
+outputs:
+  result:
+    description: "Final result: passed, failed, or infrastructure-error."
+    value: ${{ steps.evaluate.outputs.result }}
+  artifact-name:
+    description: Merged results artifact name.
+    value: ${{ inputs.artifact-name }}
+  total:
+    description: Aggregated test count.
+    value: ${{ steps.evaluate.outputs.total }}
+  passed:
+    description: Aggregated passed test count.
+    value: ${{ steps.evaluate.outputs.passed }}
+  failed:
+    description: Aggregated failed test count.
+    value: ${{ steps.evaluate.outputs.failed }}
+  skipped:
+    description: Aggregated skipped test count.
+    value: ${{ steps.evaluate.outputs.skipped }}
+  result-file:
+    description: Absolute path to the finalized result.json.
+    value: ${{ steps.prepare.outputs.result-file }}
+
+runs:
+  using: composite
+  steps:
+    - id: prepare
+      name: Finalize final result
+      shell: bash
+      env:
+        E2E_RESULTS_DIRECTORY: ${{ inputs.results-directory }}
+        E2E_EXPECTED_SHARDS: ${{ inputs.expected-shards }}
+        E2E_RUNNER_DOWNLOAD_OUTCOME: ${{ inputs.runner-download-outcome }}
+        E2E_RUNNER_LOAD_OUTCOME: ${{ inputs.runner-load-outcome }}
+        E2E_RUNNER_VERIFICATION_OUTCOME: ${{ inputs.runner-verification-outcome }}
+        E2E_SHARD_DOWNLOAD_OUTCOME: ${{ inputs.shard-download-outcome }}
+        E2E_MERGE_OUTCOME: ${{ inputs.merge-outcome }}
+        E2E_REPORT_PUBLICATION_OUTCOME: ${{ inputs.report-publication-outcome }}
+      run: |
+        set -euo pipefail
+        node "$GITHUB_ACTION_PATH/prepare-publication.mjs" \
+          "$GITHUB_WORKSPACE" \
+          "$E2E_RESULTS_DIRECTORY" \
+          "$E2E_EXPECTED_SHARDS" \
+          "$E2E_RUNNER_DOWNLOAD_OUTCOME" \
+          "$E2E_RUNNER_LOAD_OUTCOME" \
+          "$E2E_RUNNER_VERIFICATION_OUTCOME" \
+          "$E2E_SHARD_DOWNLOAD_OUTCOME" \
+          "$E2E_MERGE_OUTCOME" \
+          "$E2E_REPORT_PUBLICATION_OUTCOME" \
+          "$GITHUB_OUTPUT"
+
+    - id: publish
+      name: Upload final E2E results
+      continue-on-error: true
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.prepare.outputs.results-directory }}/
+        if-no-files-found: error
+        retention-days: ${{ inputs.retention-days }}
+
+    - id: evaluate
+      name: Publish summary and enforce result
+      if: always() && steps.prepare.outcome == 'success'
+      shell: bash
+      env:
+        E2E_RESULT_FILE: ${{ steps.prepare.outputs.result-file }}
+        E2E_ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        E2E_PUBLICATION_OUTCOME: ${{ steps.publish.outcome }}
+      run: |
+        set -euo pipefail
+        node "$GITHUB_ACTION_PATH/evaluate-publication.mjs" \
+          "$E2E_RESULT_FILE" \
+          "$E2E_ARTIFACT_NAME" \
+          "${E2E_PUBLICATION_OUTCOME:-failure}" \
+          "$GITHUB_STEP_SUMMARY" \
+          "$GITHUB_OUTPUT"

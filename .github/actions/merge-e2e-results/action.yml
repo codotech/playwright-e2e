@@ -1,0 +1,123 @@
+name: Merge E2E Results
+description: Validate shard results and merge reports inside the immutable E2E runner image.
+
+inputs:
+  download-directory:
+    description: Repository-relative directory containing downloaded shard artifacts.
+    required: false
+    default: downloaded-shards
+  results-directory:
+    description: Repository-relative directory where merged results are assembled.
+    required: false
+    default: e2e-results
+  expected-shards:
+    description: Number of shard status files and report sets required.
+    required: true
+  runner-image-id:
+    description: Content-addressed Docker image ID used to merge Playwright reports.
+    required: true
+
+outputs:
+  results-directory:
+    description: Absolute directory containing merged E2E results.
+    value: ${{ steps.stage.outputs.results-directory }}
+  report-directory:
+    description: Absolute directory containing the merged Playwright HTML report.
+    value: ${{ steps.stage.outputs.html-directory }}
+  result:
+    description: "Final result: passed, failed, or infrastructure-error."
+    value: ${{ steps.assemble.outputs.result }}
+  total:
+    description: Aggregated test count.
+    value: ${{ steps.assemble.outputs.total }}
+  passed:
+    description: Aggregated passed test count.
+    value: ${{ steps.assemble.outputs.passed }}
+  failed:
+    description: Aggregated failed test count.
+    value: ${{ steps.assemble.outputs.failed }}
+  skipped:
+    description: Aggregated skipped test count.
+    value: ${{ steps.assemble.outputs.skipped }}
+  result-file:
+    description: Absolute path to result.json.
+    value: ${{ steps.assemble.outputs.result-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Stage and validate shard results
+      id: stage
+      shell: bash
+      env:
+        E2E_DOWNLOAD_DIRECTORY: ${{ inputs.download-directory }}
+        E2E_RESULTS_DIRECTORY: ${{ inputs.results-directory }}
+        E2E_EXPECTED_SHARDS: ${{ inputs.expected-shards }}
+      run: |
+        set -euo pipefail
+        node "$GITHUB_ACTION_PATH/stage-results.mjs" \
+          "$GITHUB_WORKSPACE" \
+          "$E2E_DOWNLOAD_DIRECTORY" \
+          "$E2E_RESULTS_DIRECTORY" \
+          "$E2E_EXPECTED_SHARDS" \
+          "$GITHUB_OUTPUT"
+
+    - name: Merge Playwright blob reports
+      id: merge-html
+      continue-on-error: true
+      shell: bash
+      env:
+        E2E_CAN_MERGE: ${{ steps.stage.outputs.can-merge }}
+        E2E_BLOB_DIRECTORY: ${{ steps.stage.outputs.blob-directory }}
+        PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ steps.stage.outputs.html-directory }}
+        E2E_RUNNER_IMAGE_ID: ${{ inputs.runner-image-id }}
+      run: |
+        set +e
+        exit_code=0
+
+        if [[ "$E2E_CAN_MERGE" != "true" ]]; then
+          echo "Blob report merge cannot run because shard results are incomplete."
+          exit_code=42
+        elif [[ ! "$E2E_RUNNER_IMAGE_ID" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+          echo "Blob report merge cannot run because the runner image ID is invalid."
+          exit_code=42
+        else
+          docker run --rm \
+            --init \
+            --read-only \
+            --network none \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --pids-limit 256 \
+            --tmpfs /tmp:rw,nosuid,nodev,noexec,size=256m \
+            --user "$(id -u):$(id -g)" \
+            --env CI=true \
+            --env HOME=/tmp \
+            --env PLAYWRIGHT_HTML_OUTPUT_DIR=/merge-output \
+            --env PLAYWRIGHT_HTML_OPEN=never \
+            --volume "$E2E_BLOB_DIRECTORY:/merge-input/blob-report" \
+            --volume "$PLAYWRIGHT_HTML_OUTPUT_DIR:/merge-output" \
+            --entrypoint /workspace/e2e/node_modules/.bin/playwright \
+            "$E2E_RUNNER_IMAGE_ID" \
+            merge-reports --reporter html /merge-input/blob-report
+          exit_code=$?
+        fi
+
+        echo "exit-code=$exit_code" >> "$GITHUB_OUTPUT"
+        exit "$exit_code"
+
+    - name: Assemble deterministic results
+      id: assemble
+      if: always() && steps.stage.outcome == 'success'
+      shell: bash
+      env:
+        E2E_RESULTS_DIRECTORY: ${{ steps.stage.outputs.results-directory }}
+        E2E_EXPECTED_SHARDS: ${{ inputs.expected-shards }}
+        E2E_HTML_MERGE_EXIT_CODE: ${{ steps.merge-html.outputs.exit-code }}
+      run: |
+        set -euo pipefail
+        node "$GITHUB_ACTION_PATH/assemble-results.mjs" \
+          "$E2E_RESULTS_DIRECTORY" \
+          "$E2E_EXPECTED_SHARDS" \
+          "${E2E_HTML_MERGE_EXIT_CODE:-99}" \
+          "$GITHUB_OUTPUT"

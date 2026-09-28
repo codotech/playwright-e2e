@@ -7,18 +7,22 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 
-const [evidenceDirectory, requestedExpectedShards, requestedHtmlMergeExitCode] =
-  process.argv.slice(2);
+const [
+  resultsDirectory,
+  requestedExpectedShards,
+  requestedHtmlMergeExitCode,
+  outputFile,
+] = process.argv.slice(2);
 const expectedShards = Number(requestedExpectedShards);
 const htmlMergeExitCode = Number(requestedHtmlMergeExitCode);
-const stagingDirectory = resolve(evidenceDirectory, ".merge-input");
+const stagingDirectory = resolve(resultsDirectory, ".merge-input");
 const scanFile = resolve(stagingDirectory, "scan.json");
 
 const infrastructureFailures = [];
 let scan = { expectedShards, observedShards: [], statuses: [], errors: [] };
 if (!existsSync(scanFile)) {
   infrastructureFailures.push(
-    "Shard evidence staging did not produce scan.json",
+    "Shard results staging did not produce scan.json",
   );
 } else {
   try {
@@ -26,7 +30,7 @@ if (!existsSync(scanFile)) {
     infrastructureFailures.push(...(scan.errors ?? []));
   } catch (error) {
     infrastructureFailures.push(
-      `Cannot parse shard evidence scan: ${error.message}`,
+      `Cannot parse shard results scan: ${error.message}`,
     );
   }
 }
@@ -93,6 +97,9 @@ for (const fileName of ctrfFiles) {
 if (summary.tests === 0 && combinedTests.length > 0) {
   summary.tests = combinedTests.length;
 }
+if (summary.tests === 0) {
+  infrastructureFailures.push("No Playwright tests were executed");
+}
 if (starts.length > 0) summary.start = Math.min(...starts);
 if (stops.length > 0) summary.stop = Math.max(...stops);
 
@@ -111,21 +118,41 @@ const ctrfReport = {
   },
 };
 writeFileSync(
-  resolve(evidenceDirectory, "ctrf-report.json"),
+  resolve(resultsDirectory, "ctrf-report.json"),
   `${JSON.stringify(ctrfReport, null, 2)}\n`,
 );
 
 const failedShards = (scan.statuses ?? []).filter(
   (status) => status.result === "failed",
 );
-const incompleteShards = (scan.statuses ?? []).filter(
-  (status) => !["passed", "failed"].includes(status.result),
+const infrastructureErrorShards = (scan.statuses ?? []).filter(
+  (status) => status.result === "infrastructure-error",
 );
+const incompleteShards = (scan.statuses ?? []).filter(
+  (status) =>
+    !["passed", "failed", "infrastructure-error"].includes(status.result),
+);
+const shardInfrastructureFailures = (scan.statuses ?? []).flatMap((status) =>
+  [status.primaryFailure, ...(status.secondaryFailures ?? [])]
+    .filter((failure) => failure?.kind === "infrastructure")
+    .map(
+      (failure) =>
+        `Shard ${status.shard.index} ${failure.phase ?? "infrastructure"}: ${failure.message}`,
+    ),
+);
+if (infrastructureErrorShards.length > 0 && shardInfrastructureFailures.length === 0) {
+  shardInfrastructureFailures.push(
+    ...infrastructureErrorShards.map(
+      (status) => `Shard ${status.shard.index} reported an infrastructure error`,
+    ),
+  );
+}
 for (const status of incompleteShards) {
-  infrastructureFailures.push(
+  shardInfrastructureFailures.push(
     `Shard ${status.shard.index} did not complete; last state is ${status.result ?? "unknown"}`,
   );
 }
+infrastructureFailures.unshift(...shardInfrastructureFailures);
 
 const hasTestFailure = failedShards.length > 0 || summary.failed > 0;
 let primaryFailure = null;
@@ -153,8 +180,8 @@ if (hasTestFailure) {
   );
 }
 
-const verdict = {
-  schemaVersion: 1,
+const result = {
+  schemaVersion: 2,
   result: hasTestFailure
     ? "failed"
     : infrastructureFailures.length > 0
@@ -187,8 +214,21 @@ const verdict = {
   generatedAt: new Date().toISOString(),
 };
 writeFileSync(
-  resolve(evidenceDirectory, "verdict.json"),
-  `${JSON.stringify(verdict, null, 2)}\n`,
+  resolve(resultsDirectory, "result.json"),
+  `${JSON.stringify(result, null, 2)}\n`,
 );
+
+if (outputFile) {
+  for (const [name, value] of [
+    ["result", result.result],
+    ["total", result.summary.total],
+    ["passed", result.summary.passed],
+    ["failed", result.summary.failed],
+    ["skipped", result.summary.skipped],
+    ["result-file", resolve(resultsDirectory, "result.json")],
+  ]) {
+    writeFileSync(outputFile, `${name}=${value}\n`, { flag: "a" });
+  }
+}
 
 rmSync(stagingDirectory, { recursive: true, force: true });

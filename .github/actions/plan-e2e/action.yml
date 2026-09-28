@@ -1,0 +1,81 @@
+name: Plan E2E
+description: Validate the E2E execution manifest and produce one deterministic CI plan.
+
+inputs:
+  profile:
+    description: Named execution profile from the manifest.
+    required: true
+  projects:
+    description: Optional newline-delimited project override.
+    required: false
+    default: ""
+  labels:
+    description: Optional newline-delimited label override.
+    required: false
+    default: ""
+  label-match:
+    description: Optional label matching override, either all or any.
+    required: false
+    default: ""
+
+outputs:
+  working-directory:
+    description: Repository-relative E2E package and runner context.
+    value: ${{ steps.plan.outputs.working-directory }}
+  dockerfile:
+    description: Dockerfile path relative to working-directory.
+    value: ${{ steps.plan.outputs.dockerfile }}
+  playwright-config:
+    description: Playwright config path relative to working-directory.
+    value: ${{ steps.plan.outputs.playwright-config }}
+  compose-file:
+    description: Docker Compose file relative to the repository root.
+    value: ${{ steps.plan.outputs.compose-file }}
+  base-url:
+    description: Ready SUT URL used by Playwright.
+    value: ${{ steps.plan.outputs.base-url }}
+  projects:
+    description: Effective newline-delimited Playwright projects.
+    value: ${{ steps.plan.outputs.projects }}
+  labels:
+    description: Effective newline-delimited Playwright labels.
+    value: ${{ steps.plan.outputs.labels }}
+  label-match:
+    description: Effective label matching mode.
+    value: ${{ steps.plan.outputs.label-match }}
+  shard-count:
+    description: Number of parallel Playwright shards.
+    value: ${{ steps.plan.outputs.shard-count }}
+  matrix:
+    description: GitHub Actions shard matrix JSON.
+    value: ${{ steps.plan.outputs.matrix }}
+  artifact-retention-days:
+    description: Results and image retention period.
+    value: ${{ steps.plan.outputs.artifact-retention-days }}
+  runner-content-hash:
+    description: SHA-256 of committed and non-ignored E2E runner inputs.
+    value: ${{ steps.plan.outputs.runner-content-hash }}
+  profile:
+    description: Effective execution profile name.
+    value: ${{ steps.plan.outputs.profile }}
+
+runs:
+  using: composite
+  steps:
+    - id: plan
+      name: Validate manifest and create plan
+      shell: bash
+      env:
+        E2E_PROFILE: ${{ inputs.profile }}
+        E2E_PROJECTS_OVERRIDE: ${{ inputs.projects }}
+        E2E_LABELS_OVERRIDE: ${{ inputs.labels }}
+        E2E_LABEL_MATCH_OVERRIDE: ${{ inputs.label-match }}
+      run: |
+        set -euo pipefail
+        ruby "$GITHUB_ACTION_PATH/plan.rb" \
+          "$GITHUB_WORKSPACE" \
+          "$E2E_PROFILE" \
+          "$E2E_PROJECTS_OVERRIDE" \
+          "$E2E_LABELS_OVERRIDE" \
+          "$E2E_LABEL_MATCH_OVERRIDE" \
+          "$GITHUB_OUTPUT"

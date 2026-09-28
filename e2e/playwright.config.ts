@@ -1,10 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 import { basename, dirname } from "node:path";
 
-const host = process.env.SUT_HOST ?? "127.0.0.1";
-const port = process.env.SUT_PORT ?? "4173";
-const localBaseUrl = `http://${host}:${port}`;
-const baseURL = process.env.BASE_URL ?? localBaseUrl;
+const baseURL = process.env.BASE_URL ?? "http://127.0.0.1:4173";
 const isCi = Boolean(process.env.CI);
 const testResultsDir =
   process.env.E2E_RESULTS_DIR ??
@@ -53,16 +50,4 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
   ],
-  webServer: process.env.BASE_URL
-    ? undefined
-    : {
-        command: "node ./sut/server.mjs",
-        env: {
-          SUT_HOST: host,
-          SUT_PORT: port,
-        },
-        url: `${localBaseUrl}/health`,
-        reuseExistingServer: !isCi,
-        timeout: 30_000,
-      },
 });

@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 
-const host = process.env.SUT_HOST ?? "127.0.0.1";
+const host = process.env.SUT_HOST ?? "0.0.0.0";
 const port = Number.parseInt(process.env.SUT_PORT ?? "4173", 10);
 const maximumBodyBytes = 1024 * 1024;
 

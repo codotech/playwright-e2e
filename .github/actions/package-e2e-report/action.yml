@@ -1,0 +1,91 @@
+name: Package E2E Report Image
+description: Build and upload a portable Docker image containing a merged Playwright HTML report.
+
+inputs:
+  report-directory:
+    description: Directory containing the merged Playwright HTML report and its index.html.
+    required: true
+  image-name:
+    description: Immutable-by-run Docker image name and tag supplied by the caller.
+    required: true
+  archive-directory:
+    description: Repository-relative directory where the Docker image archive is written.
+    required: false
+    default: e2e-report-image
+  artifact-name:
+    description: GitHub artifact containing the Docker image archive.
+    required: false
+    default: e2e-report-image
+  retention-days:
+    description: Number of days GitHub retains the image artifact.
+    required: false
+    default: "10"
+
+outputs:
+  image-name:
+    description: Docker image name and tag built by the action.
+    value: ${{ steps.package.outputs.image-name }}
+  image-id:
+    description: Immutable local Docker image ID.
+    value: ${{ steps.package.outputs.image-id }}
+  artifact-name:
+    description: GitHub artifact containing the Docker archive.
+    value: ${{ inputs.artifact-name }}
+  archive-path:
+    description: Absolute path to playwright-e2e-report.tar.zst on the runner.
+    value: ${{ steps.package.outputs.archive-path }}
+
+runs:
+  using: composite
+  steps:
+    - id: package
+      name: Build and archive report image
+      shell: bash
+      env:
+        E2E_REPORT_DIRECTORY: ${{ inputs.report-directory }}
+        E2E_REPORT_IMAGE_NAME: ${{ inputs.image-name }}
+        E2E_REPORT_ARCHIVE_DIRECTORY: ${{ inputs.archive-directory }}
+      run: |
+        set -euo pipefail
+
+        eval "$(node "$GITHUB_ACTION_PATH/prepare-context.mjs" \
+          "$GITHUB_WORKSPACE" \
+          "$GITHUB_ACTION_PATH" \
+          "$E2E_REPORT_DIRECTORY" \
+          "$E2E_REPORT_IMAGE_NAME" \
+          "$E2E_REPORT_ARCHIVE_DIRECTORY")"
+
+        cleanup() {
+          rm -rf -- "$E2E_REPORT_BUILD_CONTEXT"
+        }
+        trap cleanup EXIT
+
+        docker build \
+          --file "$E2E_REPORT_BUILD_CONTEXT/Dockerfile" \
+          --tag "$E2E_REPORT_IMAGE_NAME" \
+          "$E2E_REPORT_BUILD_CONTEXT"
+
+        image_id="$(docker image inspect --format '{{.Id}}' "$E2E_REPORT_IMAGE_NAME")"
+        if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+          echo "Invalid Docker image ID: $image_id" >&2
+          exit 1
+        fi
+
+        docker save "$E2E_REPORT_IMAGE_NAME" |
+          zstd -T0 -3 --quiet -o "$E2E_REPORT_ARCHIVE_PATH"
+        test -s "$E2E_REPORT_ARCHIVE_PATH"
+
+        {
+          echo "image-name=$E2E_REPORT_IMAGE_NAME"
+          echo "image-id=$image_id"
+          echo "archive-path=$E2E_REPORT_ARCHIVE_PATH"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Upload report image archive
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.package.outputs.archive-path }}
+        if-no-files-found: error
+        retention-days: ${{ inputs.retention-days }}
+        compression-level: 0
