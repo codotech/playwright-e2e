@@ -1,8 +1,8 @@
 # Playwright E2E CI Framework
 
-A reusable GitHub Actions pipeline for Playwright tests against a Dockerized system under test (SUT), with durable evidence and one fail-closed gate.
+A reusable GitHub Actions pipeline for Playwright tests against a Dockerized system under test (SUT), with retained test results and one fail-closed gate.
 
-This repository proves the contract with a root Docker Compose service. The service exposes a health endpoint and echoes requests; Playwright tests it through API and Chromium clients.
+This repository demonstrates the framework with a root Docker Compose service. The service exposes a health endpoint and echoes requests; Playwright tests it through API and Chromium clients.
 
 ```text
 pull request / main / manual
@@ -25,11 +25,11 @@ pull request / main / manual
  load runner     load runner
  compose SUT     compose SUT
  run tests       run tests
- evidence        evidence
+ test results    test results
        |             |
        +------+------+
               |
-       merge evidence
+      merge test reports
               |
       package report image
               |
@@ -37,7 +37,7 @@ pull request / main / manual
               |
           E2E Gate
               |
-      sticky PR confidence report
+        sticky PR test report
 ```
 
 ## Run the example locally
@@ -94,7 +94,7 @@ Replace the marker with the immutable SHA you adopt. The workflow needs no inher
 | `label-match` | empty | Optional `all` or `any` override |
 | `comment-on-pr` | `true` | Update one E2E report comment on same-repository pull requests |
 
-The workflow exposes the verdict, merged test totals, and the exact names and IDs of its portable images. The image outputs are listed below.
+The workflow exposes the final result, merged test totals, and the exact names and IDs of its portable images. The image outputs are listed below.
 
 ## Configure execution policy
 
@@ -216,23 +216,23 @@ Each shard runs on its own runner and performs the full lifecycle:
 
 A startup or cleanup failure is an infrastructure error. A Playwright failure remains the primary failure when log collection or cleanup also fails.
 
-## Evidence and gate
+## Test results and gate
 
-Every shard uploads its status, Compose logs, blob report, CTRF result, and Playwright test results. The merged `e2e-evidence` artifact contains:
+Every shard uploads its status, Compose logs, blob report, CTRF result, and Playwright test results. The merged test-results artifact is named `e2e-results` and contains:
 
 ```text
-e2e-evidence/
+e2e-results/
 +-- playwright-report/
 +-- ctrf-report.json
 +-- shard-status/
-+-- verdict.json
++-- result.json
 ```
 
-The same immutable runner image merges the shard blobs; pull-request dependencies are never installed directly on the GitHub host. `E2E Gate` fails for runner transport or identity problems, a failed or cancelled shard, unhealthy SUT lifecycle, missing evidence, report merge failure, report-image publication failure, evidence publication failure, or a non-passing verdict. Evidence publication cannot turn a failed run green.
+The same immutable runner image merges the shard blobs; pull-request dependencies are never installed directly on the GitHub host. `E2E Gate` fails for runner transport or identity problems, a failed or cancelled shard, unhealthy SUT lifecycle, missing test results, report merge failure, report-image publication failure, test-results artifact publication failure, or a non-passing result. Publishing reports cannot turn a failed run green.
 
 ## Load the runner and report images
 
-A healthy run publishes two Docker archives in addition to the regular test evidence. If report packaging or publication fails, the report outputs are empty and the authoritative verdict is an infrastructure error.
+A healthy run publishes two Docker archives in addition to the merged test-results artifact. If report packaging or publication fails, the report outputs are empty and the final result is an infrastructure error.
 
 | Artifact | Archive inside it | Purpose |
 | --- | --- | --- |
@@ -268,7 +268,7 @@ docker run --rm --init --ipc=host \
   --add-host=host.docker.internal:host-gateway \
   -e BASE_URL=http://host.docker.internal:4173 \
   -e HOME=/tmp \
-  -v "$PWD/e2e-output:/evidence" \
+  -v "$PWD/e2e-output:/test-output" \
   "$RUNNER_IMAGE_ID"
 ```
 
@@ -285,6 +285,6 @@ Open `http://127.0.0.1:8080`. The report image contains the complete merged HTML
 
 These images are currently GitHub artifacts, not registry publications. Download and `docker load` the archives before use; artifact retention still applies, and the local image names are not remotely pullable.
 
-For pull requests from the same repository, the workflow creates or updates one sticky `E2E confidence report` comment with the verdict, selected profile, aggregate totals, active project and label filters, image identities, failure reason, and workflow evidence link. Grant `pull-requests: write` in the caller workflow, or set `comment-on-pr: false` when comments are not wanted. Comment publication is non-blocking and does not change the gate verdict.
+For pull requests from the same repository, the workflow creates or updates one sticky E2E result comment with the final result, selected profile, aggregate totals, active project and label filters, image identities, failure reason, and workflow-run link. Grant `pull-requests: write` in the caller workflow, or set `comment-on-pr: false` when comments are not wanted. Comment publication is non-blocking and does not change the gate result.
 
 The framework targets GitHub.com and uses `$/` references so the reusable workflow and its composite actions come from the same commit. That syntax is not available on GitHub Enterprise Server.
