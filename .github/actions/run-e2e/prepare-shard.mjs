@@ -149,7 +149,7 @@ writeFileSync(selectionFile, `${JSON.stringify(selection, null, 2)}\n`);
 
 const statusFile = resolve(shardDirectory, "shard-status.json");
 const status = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   shard: { index: shardIndex, total: shardTotal },
   result: "running",
   exitCode: null,
@@ -180,7 +180,7 @@ const status = {
       startupExitCode: null,
     },
     playwright: { exitCode: null, started: false },
-    evidence: { logCaptureExitCode: null },
+    results: { logCaptureExitCode: null },
     cleanup: { teardownExitCode: null },
   },
   github: {

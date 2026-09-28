@@ -8,21 +8,21 @@ import {
 import { resolve } from "node:path";
 
 const [
-  evidenceDirectory,
+  resultsDirectory,
   requestedExpectedShards,
   requestedHtmlMergeExitCode,
   outputFile,
 ] = process.argv.slice(2);
 const expectedShards = Number(requestedExpectedShards);
 const htmlMergeExitCode = Number(requestedHtmlMergeExitCode);
-const stagingDirectory = resolve(evidenceDirectory, ".merge-input");
+const stagingDirectory = resolve(resultsDirectory, ".merge-input");
 const scanFile = resolve(stagingDirectory, "scan.json");
 
 const infrastructureFailures = [];
 let scan = { expectedShards, observedShards: [], statuses: [], errors: [] };
 if (!existsSync(scanFile)) {
   infrastructureFailures.push(
-    "Shard evidence staging did not produce scan.json",
+    "Shard results staging did not produce scan.json",
   );
 } else {
   try {
@@ -30,7 +30,7 @@ if (!existsSync(scanFile)) {
     infrastructureFailures.push(...(scan.errors ?? []));
   } catch (error) {
     infrastructureFailures.push(
-      `Cannot parse shard evidence scan: ${error.message}`,
+      `Cannot parse shard results scan: ${error.message}`,
     );
   }
 }
@@ -118,7 +118,7 @@ const ctrfReport = {
   },
 };
 writeFileSync(
-  resolve(evidenceDirectory, "ctrf-report.json"),
+  resolve(resultsDirectory, "ctrf-report.json"),
   `${JSON.stringify(ctrfReport, null, 2)}\n`,
 );
 
@@ -180,8 +180,8 @@ if (hasTestFailure) {
   );
 }
 
-const verdict = {
-  schemaVersion: 1,
+const result = {
+  schemaVersion: 2,
   result: hasTestFailure
     ? "failed"
     : infrastructureFailures.length > 0
@@ -214,18 +214,18 @@ const verdict = {
   generatedAt: new Date().toISOString(),
 };
 writeFileSync(
-  resolve(evidenceDirectory, "verdict.json"),
-  `${JSON.stringify(verdict, null, 2)}\n`,
+  resolve(resultsDirectory, "result.json"),
+  `${JSON.stringify(result, null, 2)}\n`,
 );
 
 if (outputFile) {
   for (const [name, value] of [
-    ["verdict", verdict.result],
-    ["total", verdict.summary.total],
-    ["passed", verdict.summary.passed],
-    ["failed", verdict.summary.failed],
-    ["skipped", verdict.summary.skipped],
-    ["verdict-file", resolve(evidenceDirectory, "verdict.json")],
+    ["result", result.result],
+    ["total", result.summary.total],
+    ["passed", result.summary.passed],
+    ["failed", result.summary.failed],
+    ["skipped", result.summary.skipped],
+    ["result-file", resolve(resultsDirectory, "result.json")],
   ]) {
     writeFileSync(outputFile, `${name}=${value}\n`, { flag: "a" });
   }

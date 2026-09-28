@@ -128,13 +128,13 @@ if (runnerExitCode === 0 && startupExitCode === 0 && playwrightExitCode === null
 if (logExitCode === null) {
   failures.push({
     kind: "infrastructure",
-    phase: "evidence",
+    phase: "results",
     message: "Docker Compose log capture did not report an exit code",
   });
 } else if (logExitCode !== 0) {
   failures.push({
     kind: "infrastructure",
-    phase: "evidence",
+    phase: "results",
     message: `Docker Compose log capture exited with ${logExitCode}`,
   });
 }
@@ -176,7 +176,7 @@ const exitCodeForFailure = (failure) => {
       return runnerExitCode ?? 1;
     case "sut-startup":
       return startupExitCode ?? 1;
-    case "evidence":
+    case "results":
       return logExitCode ?? 1;
     case "cleanup":
       return teardownExitCode ?? 1;
@@ -193,7 +193,7 @@ status.lifecycle.playwright = {
   exitCode: playwrightExitCode,
   started: playwrightExitCode !== null,
 };
-status.lifecycle.evidence.logCaptureExitCode = logExitCode;
+status.lifecycle.results.logCaptureExitCode = logExitCode;
 status.lifecycle.cleanup.teardownExitCode = teardownExitCode;
 status.finishedAt = finishedAt.toISOString();
 status.durationMs = Math.max(0, finishedAt.getTime() - startedAt.getTime());

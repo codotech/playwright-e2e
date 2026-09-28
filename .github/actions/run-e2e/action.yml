@@ -1,5 +1,5 @@
 name: Run E2E Shard
-description: Run one Playwright shard and always leave machine-readable shard evidence.
+description: Run one Playwright shard and always leave machine-readable shard results.
 
 inputs:
   working-directory:
@@ -58,10 +58,10 @@ outputs:
     description: "Shard result: passed, failed, or infrastructure-error."
     value: ${{ steps.finalize.outputs.result }}
   exit-code:
-    description: Effective shard exit code after SUT, Playwright, evidence, and cleanup checks.
+    description: Effective shard exit code after SUT, Playwright, results, and cleanup checks.
     value: ${{ steps.finalize.outputs.exit-code }}
   shard-directory:
-    description: Absolute path containing this shard's evidence.
+    description: Absolute path containing this shard's results.
     value: ${{ steps.initialize.outputs.shard-directory }}
   status-file:
     description: Absolute path to this shard's status JSON.
@@ -70,7 +70,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Initialize shard evidence
+    - name: Initialize shard results
       id: initialize
       shell: bash
       env:
@@ -223,11 +223,11 @@ runs:
             --env BASE_URL="$E2E_BASE_URL" \
             --env CI=true \
             --env HOME=/tmp \
-            --env E2E_RESULTS_DIR=/evidence/test-results \
-            --env PLAYWRIGHT_BLOB_OUTPUT_DIR=/evidence/blob-report \
-            --env PLAYWRIGHT_OUTPUT_DIR=/evidence/test-results \
-            --env CTRF_OUTPUT_FILE=/evidence/ctrf/ctrf-report.json \
-            --volume "$E2E_SHARD_DIRECTORY:/evidence" \
+            --env E2E_RESULTS_DIR=/test-output/test-results \
+            --env PLAYWRIGHT_BLOB_OUTPUT_DIR=/test-output/blob-report \
+            --env PLAYWRIGHT_OUTPUT_DIR=/test-output/test-results \
+            --env CTRF_OUTPUT_FILE=/test-output/ctrf/ctrf-report.json \
+            --volume "$E2E_SHARD_DIRECTORY:/test-output" \
             "$E2E_RUNNER_IMAGE_ID" \
             --config "$E2E_CONFIG" \
             --shard="$E2E_SHARD_INDEX/$E2E_SHARD_TOTAL" \
@@ -285,7 +285,7 @@ runs:
         echo "exit-code=$teardown_exit_code" >> "$GITHUB_OUTPUT"
         exit "$teardown_exit_code"
 
-    - name: Finalize shard evidence
+    - name: Finalize shard results
       id: finalize
       if: always() && steps.initialize.outcome == 'success'
       shell: bash

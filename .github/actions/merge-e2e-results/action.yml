@@ -1,15 +1,15 @@
-name: Merge E2E Evidence
-description: Validate shard evidence and merge reports inside the immutable E2E runner image.
+name: Merge E2E Results
+description: Validate shard results and merge reports inside the immutable E2E runner image.
 
 inputs:
   download-directory:
     description: Repository-relative directory containing downloaded shard artifacts.
     required: false
     default: downloaded-shards
-  evidence-directory:
-    description: Repository-relative directory where merged evidence is assembled.
+  results-directory:
+    description: Repository-relative directory where merged results are assembled.
     required: false
-    default: e2e-evidence
+    default: e2e-results
   expected-shards:
     description: Number of shard status files and report sets required.
     required: true
@@ -18,9 +18,9 @@ inputs:
     required: true
 
 outputs:
-  verdict:
-    description: "Authoritative verdict: passed, failed, or infrastructure-error."
-    value: ${{ steps.assemble.outputs.verdict }}
+  result:
+    description: "Final result: passed, failed, or infrastructure-error."
+    value: ${{ steps.assemble.outputs.result }}
   total:
     description: Aggregated test count.
     value: ${{ steps.assemble.outputs.total }}
@@ -33,26 +33,26 @@ outputs:
   skipped:
     description: Aggregated skipped test count.
     value: ${{ steps.assemble.outputs.skipped }}
-  verdict-file:
-    description: Absolute path to verdict.json.
-    value: ${{ steps.assemble.outputs.verdict-file }}
+  result-file:
+    description: Absolute path to result.json.
+    value: ${{ steps.assemble.outputs.result-file }}
 
 runs:
   using: composite
   steps:
-    - name: Stage and validate shard evidence
+    - name: Stage and validate shard results
       id: stage
       shell: bash
       env:
         E2E_DOWNLOAD_DIRECTORY: ${{ inputs.download-directory }}
-        E2E_EVIDENCE_DIRECTORY: ${{ inputs.evidence-directory }}
+        E2E_RESULTS_DIRECTORY: ${{ inputs.results-directory }}
         E2E_EXPECTED_SHARDS: ${{ inputs.expected-shards }}
       run: |
         set -euo pipefail
-        node "$GITHUB_ACTION_PATH/stage-evidence.mjs" \
+        node "$GITHUB_ACTION_PATH/stage-results.mjs" \
           "$GITHUB_WORKSPACE" \
           "$E2E_DOWNLOAD_DIRECTORY" \
-          "$E2E_EVIDENCE_DIRECTORY" \
+          "$E2E_RESULTS_DIRECTORY" \
           "$E2E_EXPECTED_SHARDS" \
           "$GITHUB_OUTPUT"
 
@@ -70,7 +70,7 @@ runs:
         exit_code=0
 
         if [[ "$E2E_CAN_MERGE" != "true" ]]; then
-          echo "Blob report merge cannot run because shard evidence is incomplete."
+          echo "Blob report merge cannot run because shard results are incomplete."
           exit_code=42
         elif [[ ! "$E2E_RUNNER_IMAGE_ID" =~ ^sha256:[a-f0-9]{64}$ ]]; then
           echo "Blob report merge cannot run because the runner image ID is invalid."
@@ -100,18 +100,18 @@ runs:
         echo "exit-code=$exit_code" >> "$GITHUB_OUTPUT"
         exit "$exit_code"
 
-    - name: Assemble deterministic evidence
+    - name: Assemble deterministic results
       id: assemble
       if: always() && steps.stage.outcome == 'success'
       shell: bash
       env:
-        E2E_EVIDENCE_DIRECTORY: ${{ steps.stage.outputs.evidence-directory }}
+        E2E_RESULTS_DIRECTORY: ${{ steps.stage.outputs.results-directory }}
         E2E_EXPECTED_SHARDS: ${{ inputs.expected-shards }}
         E2E_HTML_MERGE_EXIT_CODE: ${{ steps.merge-html.outputs.exit-code }}
       run: |
         set -euo pipefail
-        node "$GITHUB_ACTION_PATH/assemble-evidence.mjs" \
-          "$E2E_EVIDENCE_DIRECTORY" \
+        node "$GITHUB_ACTION_PATH/assemble-results.mjs" \
+          "$E2E_RESULTS_DIRECTORY" \
           "$E2E_EXPECTED_SHARDS" \
           "${E2E_HTML_MERGE_EXIT_CODE:-99}" \
           "$GITHUB_OUTPUT"

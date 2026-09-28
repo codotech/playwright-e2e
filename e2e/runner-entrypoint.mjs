@@ -2,12 +2,12 @@ import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-const evidenceRoot = "/evidence";
+const testOutputRoot = "/test-output";
 const environmentDefaults = {
   CI: "true",
-  E2E_RESULTS_DIR: `${evidenceRoot}/test-results`,
-  PLAYWRIGHT_BLOB_OUTPUT_DIR: `${evidenceRoot}/blob-report`,
-  CTRF_OUTPUT_FILE: `${evidenceRoot}/ctrf/ctrf-report.json`,
+  E2E_RESULTS_DIR: `${testOutputRoot}/test-results`,
+  PLAYWRIGHT_BLOB_OUTPUT_DIR: `${testOutputRoot}/blob-report`,
+  CTRF_OUTPUT_FILE: `${testOutputRoot}/ctrf/ctrf-report.json`,
 };
 
 for (const [name, value] of Object.entries(environmentDefaults)) {

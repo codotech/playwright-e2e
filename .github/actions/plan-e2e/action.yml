@@ -50,7 +50,7 @@ outputs:
     description: GitHub Actions shard matrix JSON.
     value: ${{ steps.plan.outputs.matrix }}
   artifact-retention-days:
-    description: Evidence and image retention period.
+    description: Results and image retention period.
     value: ${{ steps.plan.outputs.artifact-retention-days }}
   runner-content-hash:
     description: SHA-256 of committed and non-ignored E2E runner inputs.

@@ -8,7 +8,7 @@ node_modules/
 .npmrc
 **/.npmrc
 
-# Generated test evidence and reports
+# Generated test results and reports
 blob-report/
 **/blob-report/
 ctrf/
@@ -17,8 +17,8 @@ playwright-report/
 **/playwright-report/
 test-results/
 **/test-results/
-e2e-evidence/
-**/e2e-evidence/
+e2e-results/
+**/e2e-results/
 downloaded-shards/
 **/downloaded-shards/
 coverage/

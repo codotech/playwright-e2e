@@ -8,7 +8,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 
 const [
   workspace,
-  requestedVerdictFile,
+  requestedResultFile,
   shardJobResult,
   mergeJobResult,
   publicationResult,
@@ -17,31 +17,31 @@ const [
 ] = process.argv.slice(2);
 
 const workspacePath = realpathSync(workspace);
-const verdictFile = isAbsolute(requestedVerdictFile)
-  ? requestedVerdictFile
-  : resolve(workspacePath, requestedVerdictFile);
-const verdictRelativePath = relative(workspacePath, verdictFile);
+const resultFile = isAbsolute(requestedResultFile)
+  ? requestedResultFile
+  : resolve(workspacePath, requestedResultFile);
+const resultRelativePath = relative(workspacePath, resultFile);
 
 const orchestrationFailures = [];
 if (
-  verdictRelativePath === ".." ||
-  verdictRelativePath.startsWith(
+  resultRelativePath === ".." ||
+  resultRelativePath.startsWith(
     `..${process.platform === "win32" ? "\\" : "/"}`,
   ) ||
-  isAbsolute(verdictRelativePath)
+  isAbsolute(resultRelativePath)
 ) {
-  orchestrationFailures.push("verdict-file must be inside GITHUB_WORKSPACE");
+  orchestrationFailures.push("result-file must be inside GITHUB_WORKSPACE");
 }
 
-let verdict = null;
-if (orchestrationFailures.length === 0 && existsSync(verdictFile)) {
+let result = null;
+if (orchestrationFailures.length === 0 && existsSync(resultFile)) {
   try {
-    verdict = JSON.parse(readFileSync(verdictFile, "utf8"));
+    result = JSON.parse(readFileSync(resultFile, "utf8"));
   } catch (error) {
-    orchestrationFailures.push(`Cannot parse verdict.json: ${error.message}`);
+    orchestrationFailures.push(`Cannot parse result.json: ${error.message}`);
   }
 } else if (orchestrationFailures.length === 0) {
-  orchestrationFailures.push(`Missing verdict.json at ${verdictRelativePath}`);
+  orchestrationFailures.push(`Missing result.json at ${resultRelativePath}`);
 }
 
 const upstreamResults = [
@@ -55,8 +55,8 @@ for (const [label, result] of upstreamResults) {
   }
 }
 
-let primaryFailure = verdict?.primaryFailure ?? null;
-const secondaryFailures = [...(verdict?.secondaryFailures ?? [])];
+let primaryFailure = result?.primaryFailure ?? null;
+const secondaryFailures = [...(result?.secondaryFailures ?? [])];
 for (const message of orchestrationFailures) {
   const failure = { kind: "infrastructure", message };
   if (!primaryFailure) primaryFailure = failure;
@@ -64,7 +64,7 @@ for (const message of orchestrationFailures) {
     secondaryFailures.push(failure);
 }
 
-const recordedResult = verdict?.result ?? "infrastructure-error";
+const recordedResult = result?.result ?? "infrastructure-error";
 const finalResult =
   recordedResult === "failed"
     ? "failed"
@@ -78,7 +78,7 @@ appendFileSync(
   [
     "## Final E2E Gate",
     "",
-    `**Verdict:** ${finalResult}`,
+    `**Result:** ${finalResult}`,
     "",
     `- Shard job: ${shardJobResult}`,
     `- Merge job: ${mergeJobResult}`,
@@ -100,11 +100,11 @@ const escapeOutput = (value) =>
     .replaceAll("%", "%25")
     .replaceAll("\r", "%0D")
     .replaceAll("\n", "%0A");
-appendFileSync(outputFile, `verdict=${finalResult}\n`);
+appendFileSync(outputFile, `result=${finalResult}\n`);
 appendFileSync(outputFile, `primary-failure=${escapeOutput(primaryMessage)}\n`);
 
 if (finalResult !== "passed") {
-  console.error(`Final E2E verdict: ${finalResult}`);
+  console.error(`Final E2E result: ${finalResult}`);
   if (primaryMessage) console.error(`Primary failure: ${primaryMessage}`);
   for (const failure of secondaryFailures)
     console.error(`Additional failure: ${failure.message}`);

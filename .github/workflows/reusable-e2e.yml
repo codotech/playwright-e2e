@@ -56,11 +56,11 @@ on:
       report-image-artifact:
         description: Artifact containing the portable E2E report Docker archive.
         value: ${{ jobs.merge.outputs.report-image-artifact }}
-      verdict:
-        description: Authoritative E2E verdict.
-        value: ${{ jobs.e2e_gate.outputs.verdict }}
+      result:
+        description: Final E2E result.
+        value: ${{ jobs.e2e_gate.outputs.result }}
       artifact-name:
-        description: Name of the merged evidence artifact.
+        description: Name of the merged results artifact.
         value: ${{ jobs.merge.outputs.artifact-name }}
       total:
         description: Total number of tests in the merged report.
@@ -222,7 +222,7 @@ jobs:
           shard-total: ${{ needs.plan.outputs.shard-count }}
           results-directory: test-results
 
-      - name: Upload shard evidence
+      - name: Upload shard results
         if: always() && steps.run.outputs.shard-directory != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -231,7 +231,7 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ needs.plan.outputs.artifact-retention-days }}
 
-      - name: Preserve shard verdict
+      - name: Preserve shard result
         if: >-
           always() && (steps.download-runner.outcome != 'success' ||
           steps.load-runner.outcome != 'success' ||
@@ -242,7 +242,7 @@ jobs:
           exit 1
 
   merge:
-    name: Merge E2E evidence
+    name: Merge E2E results
     needs:
       - plan
       - build_runner
@@ -251,7 +251,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      verdict: ${{ steps.publish.outputs.verdict }}
+      result: ${{ steps.publish.outputs.result }}
       artifact-name: ${{ steps.publish.outputs.artifact-name }}
       total: ${{ steps.publish.outputs.total }}
       passed: ${{ steps.publish.outputs.passed }}
@@ -299,7 +299,7 @@ jobs:
           fi
 
       - id: download
-        name: Download shard evidence
+        name: Download shard results
         if: always()
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -309,13 +309,13 @@ jobs:
           merge-multiple: false
 
       - id: merge
-        name: Merge E2E evidence
+        name: Merge E2E results
         if: always()
         continue-on-error: true
-        uses: $/.github/actions/merge-e2e-evidence
+        uses: $/.github/actions/merge-e2e-results
         with:
           download-directory: downloaded-shards
-          evidence-directory: e2e-evidence
+          results-directory: e2e-results
           expected-shards: ${{ needs.plan.outputs.shard-count }}
           runner-image-id: ${{ needs.build_runner.outputs.image-id }}
 
@@ -325,21 +325,21 @@ jobs:
         continue-on-error: true
         uses: $/.github/actions/package-e2e-report
         with:
-          report-directory: e2e-evidence/playwright-report
+          report-directory: e2e-results/playwright-report
           image-name: playwright-e2e-report:${{ github.run_id }}-${{ github.run_attempt }}
           archive-directory: e2e-report-image
           artifact-name: e2e-report-image
           retention-days: ${{ needs.plan.outputs.artifact-retention-days }}
 
       - id: publish
-        name: Publish and enforce authoritative evidence
+        name: Publish and enforce final results
         if: always()
         continue-on-error: true
-        uses: $/.github/actions/publish-e2e-evidence
+        uses: $/.github/actions/publish-e2e-results
         with:
-          evidence-directory: e2e-evidence
+          results-directory: e2e-results
           expected-shards: ${{ needs.plan.outputs.shard-count }}
-          artifact-name: e2e-evidence
+          artifact-name: e2e-results
           retention-days: ${{ needs.plan.outputs.artifact-retention-days }}
           runner-download-outcome: ${{ steps.download-runner.outcome }}
           runner-load-outcome: ${{ steps.load-runner.outcome }}
@@ -348,11 +348,11 @@ jobs:
           merge-outcome: ${{ steps.merge.outcome }}
           report-publication-outcome: ${{ steps.package-report.outcome }}
 
-      - name: Preserve merge verdict
+      - name: Preserve merge result
         if: always() && steps.publish.outcome != 'success'
         shell: bash
         run: |
-          echo "::error::E2E evidence could not be completed successfully"
+          echo "::error::E2E results could not be completed successfully"
           exit 1
 
   e2e_gate:
@@ -365,22 +365,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      verdict: ${{ steps.finalize.outputs.verdict }}
+      result: ${{ steps.finalize.outputs.result }}
       primary-failure: ${{ steps.finalize.outputs.primary-failure }}
     steps:
       - id: download
-        name: Download authoritative evidence
+        name: Download final results
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: e2e-evidence
-          path: final-evidence
+          name: e2e-results
+          path: final-results
 
       - id: finalize
-        name: Enforce authoritative verdict
-        uses: $/.github/actions/finalize-e2e-verdict
+        name: Enforce final result
+        uses: $/.github/actions/finalize-e2e-result
         with:
-          verdict-file: final-evidence/verdict.json
+          result-file: final-results/result.json
           shard-job-result: ${{ needs.shards.result }}
           merge-job-result: ${{ needs.merge.result }}
           publication-result: ${{ steps.download.outcome }}
@@ -405,8 +405,8 @@ jobs:
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           E2E_GATE_JOB_RESULT: ${{ needs.e2e_gate.result }}
-          E2E_GATE_VERDICT: ${{ needs.e2e_gate.outputs.verdict }}
-          E2E_MERGE_VERDICT: ${{ needs.merge.outputs.verdict }}
+          E2E_GATE_RESULT: ${{ needs.e2e_gate.outputs.result }}
+          E2E_MERGE_RESULT: ${{ needs.merge.outputs.result }}
           E2E_PRIMARY_FAILURE: ${{ needs.e2e_gate.outputs.primary-failure }}
           E2E_TOTAL: ${{ needs.merge.outputs.total }}
           E2E_PASSED: ${{ needs.merge.outputs.passed }}
@@ -441,12 +441,12 @@ jobs:
             };
 
             const gateResult = clean(process.env.E2E_GATE_JOB_RESULT, 'failure');
-            const verdict = clean(
-              process.env.E2E_GATE_VERDICT,
-              clean(process.env.E2E_MERGE_VERDICT, gateResult === 'success' ? 'passed' : 'infrastructure-error'),
+            const result = clean(
+              process.env.E2E_GATE_RESULT,
+              clean(process.env.E2E_MERGE_RESULT, gateResult === 'success' ? 'passed' : 'infrastructure-error'),
             );
-            const passed = verdict === 'passed';
-            const status = passed ? '✅ Passed' : verdict === 'failed' ? '❌ Tests failed' : '⚠️ Infrastructure error';
+            const passed = result === 'passed';
+            const status = passed ? '✅ Passed' : result === 'failed' ? '❌ Tests failed' : '⚠️ Infrastructure error';
             const total = clean(process.env.E2E_TOTAL, 'unknown');
             const passedCount = clean(process.env.E2E_PASSED, 'unknown');
             const failedCount = clean(process.env.E2E_FAILED, 'unknown');
@@ -455,7 +455,7 @@ jobs:
             const projects = list(process.env.E2E_PROJECTS, 'All configured projects');
             const labels = list(process.env.E2E_LABELS, 'All labels');
             const labelMatch = clean(process.env.E2E_LABEL_MATCH, 'all');
-            const artifactName = clean(process.env.E2E_ARTIFACT_NAME, 'e2e-evidence');
+            const artifactName = clean(process.env.E2E_ARTIFACT_NAME, 'e2e-results');
             const runnerImageName = clean(process.env.E2E_RUNNER_IMAGE_NAME, 'unavailable');
             const runnerImageId = clean(process.env.E2E_RUNNER_IMAGE_ID, 'unavailable');
             const runnerImageArtifact = clean(process.env.E2E_RUNNER_IMAGE_ARTIFACT, 'unavailable');
@@ -469,7 +469,7 @@ jobs:
 
             const lines = [
               marker,
-              '## E2E confidence report',
+              '## E2E test report',
               '',
               '| Signal | Result |',
               '| --- | --- |',
@@ -481,7 +481,7 @@ jobs:
               '| SUT | Docker Compose, isolated per shard |',
               `| Runner image | ${cell(`\`${runnerImageName}\` · \`${runnerImageId}\` · \`${runnerImageArtifact}\` · ${runnerSource}`)} |`,
               `| Report image | ${cell(`\`${reportImageName}\` · \`${reportImageId}\` · \`${reportImageArtifact}\``)} |`,
-              `| Evidence | [Open workflow run](${runUrl}) · \`${cell(artifactName)}\` |`,
+              `| Results | [Open workflow run](${runUrl}) · \`${cell(artifactName)}\` |`,
             ];
 
             const primaryFailure = clean(process.env.E2E_PRIMARY_FAILURE, '');

@@ -10,7 +10,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 
 const [
   workspace,
-  requestedEvidenceDirectory,
+  requestedResultsDirectory,
   requestedExpectedShards,
   runnerDownloadOutcome,
   runnerLoadOutcome,
@@ -29,46 +29,46 @@ if (
 ) {
   throw new Error("expected-shards must be an integer between 1 and 100");
 }
-if (!requestedEvidenceDirectory || isAbsolute(requestedEvidenceDirectory)) {
-  throw new Error("evidence-directory must be a non-empty repository-relative path");
+if (!requestedResultsDirectory || isAbsolute(requestedResultsDirectory)) {
+  throw new Error("results-directory must be a non-empty repository-relative path");
 }
 
 const workspacePath = realpathSync(workspace);
-const evidenceDirectory = resolve(workspacePath, requestedEvidenceDirectory);
-const relativeEvidenceDirectory = relative(workspacePath, evidenceDirectory);
+const resultsDirectory = resolve(workspacePath, requestedResultsDirectory);
+const relativeResultsDirectory = relative(workspacePath, resultsDirectory);
 if (
-  relativeEvidenceDirectory === "" ||
-  relativeEvidenceDirectory === ".." ||
-  relativeEvidenceDirectory.startsWith(`..${sep}`) ||
-  isAbsolute(relativeEvidenceDirectory)
+  relativeResultsDirectory === "" ||
+  relativeResultsDirectory === ".." ||
+  relativeResultsDirectory.startsWith(`..${sep}`) ||
+  isAbsolute(relativeResultsDirectory)
 ) {
-  throw new Error("evidence-directory must resolve below GITHUB_WORKSPACE");
+  throw new Error("results-directory must resolve below GITHUB_WORKSPACE");
 }
 if (
-  existsSync(evidenceDirectory) &&
-  lstatSync(evidenceDirectory).isSymbolicLink()
+  existsSync(resultsDirectory) &&
+  lstatSync(resultsDirectory).isSymbolicLink()
 ) {
-  throw new Error("evidence-directory must not be a symbolic link");
+  throw new Error("results-directory must not be a symbolic link");
 }
-mkdirSync(evidenceDirectory, { recursive: true });
+mkdirSync(resultsDirectory, { recursive: true });
 
-const verdictFile = resolve(evidenceDirectory, "verdict.json");
-let verdict = null;
-if (existsSync(verdictFile)) {
+const resultFile = resolve(resultsDirectory, "result.json");
+let result = null;
+if (existsSync(resultFile)) {
   try {
-    verdict = JSON.parse(readFileSync(verdictFile, "utf8"));
+    result = JSON.parse(readFileSync(resultFile, "utf8"));
   } catch {
-    verdict = null;
+    result = null;
   }
 }
-if (!verdict || typeof verdict !== "object") {
-  verdict = {
-    schemaVersion: 1,
+if (!result || typeof result !== "object") {
+  result = {
+    schemaVersion: 2,
     result: "infrastructure-error",
     primaryFailure: {
       kind: "infrastructure",
-      phase: "evidence-assembly",
-      message: "Evidence assembly did not produce a readable verdict.json",
+      phase: "results-assembly",
+      message: "Results assembly did not produce a readable result.json",
     },
     secondaryFailures: [],
     expectedShards,
@@ -91,8 +91,8 @@ const checks = [
   ["runner-archive-download", runnerDownloadOutcome],
   ["runner-image-load", runnerLoadOutcome],
   ["runner-image-verification", runnerVerificationOutcome],
-  ["shard-evidence-download", shardDownloadOutcome],
-  ["evidence-merge", mergeOutcome],
+  ["shard-results-download", shardDownloadOutcome],
+  ["results-merge", mergeOutcome],
   ["report-image-publication", reportPublicationOutcome],
 ];
 const newFailures = checks
@@ -103,28 +103,28 @@ const newFailures = checks
     message: `${phase} finished with ${outcome || "unknown"}`,
   }));
 
-verdict.secondaryFailures = Array.isArray(verdict.secondaryFailures)
-  ? verdict.secondaryFailures
+result.secondaryFailures = Array.isArray(result.secondaryFailures)
+  ? result.secondaryFailures
   : [];
 if (newFailures.length > 0) {
-  if (!verdict.primaryFailure) {
-    verdict.primaryFailure = newFailures.shift();
+  if (!result.primaryFailure) {
+    result.primaryFailure = newFailures.shift();
   }
-  verdict.secondaryFailures.push(...newFailures);
-  if (verdict.result === "passed" || !verdict.result) {
-    verdict.result = "infrastructure-error";
+  result.secondaryFailures.push(...newFailures);
+  if (result.result === "passed" || !result.result) {
+    result.result = "infrastructure-error";
   }
 }
-verdict.expectedShards = expectedShards;
-verdict.artifacts = {
-  ...(verdict.artifacts ?? {}),
+result.expectedShards = expectedShards;
+result.artifacts = {
+  ...(result.artifacts ?? {}),
   reportImage:
     reportPublicationOutcome === "success"
       ? { published: true, name: "e2e-report-image" }
       : { published: false, name: null },
 };
-verdict.finalizedAt = new Date().toISOString();
-writeFileSync(verdictFile, `${JSON.stringify(verdict, null, 2)}\n`);
+result.finalizedAt = new Date().toISOString();
+writeFileSync(resultFile, `${JSON.stringify(result, null, 2)}\n`);
 
 const appendOutput = (name, value) => {
   const escaped = String(value)
@@ -133,5 +133,5 @@ const appendOutput = (name, value) => {
     .replaceAll("\n", "%0A");
   writeFileSync(outputFile, `${name}=${escaped}\n`, { flag: "a" });
 };
-appendOutput("evidence-directory", evidenceDirectory);
-appendOutput("verdict-file", verdictFile);
+appendOutput("results-directory", resultsDirectory);
+appendOutput("result-file", resultFile);

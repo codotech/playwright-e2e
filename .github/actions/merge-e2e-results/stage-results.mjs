@@ -14,7 +14,7 @@ import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 const [
   workspace,
   requestedDownloadDirectory,
-  requestedEvidenceDirectory,
+  requestedResultsDirectory,
   requestedExpectedShards,
   outputFile,
 ] = process.argv.slice(2);
@@ -47,28 +47,28 @@ const assertRelative = (value, label) => {
 
 for (const [value, label] of [
   [requestedDownloadDirectory, "download-directory"],
-  [requestedEvidenceDirectory, "evidence-directory"],
+  [requestedResultsDirectory, "results-directory"],
 ]) {
   assertRelative(value, label);
 }
 
 const workspacePath = realpathSync(workspace);
 const downloadDirectory = resolve(workspacePath, requestedDownloadDirectory);
-const evidenceDirectory = resolve(workspacePath, requestedEvidenceDirectory);
+const resultsDirectory = resolve(workspacePath, requestedResultsDirectory);
 
 if (
-  existsSync(evidenceDirectory) &&
-  lstatSync(evidenceDirectory).isSymbolicLink()
+  existsSync(resultsDirectory) &&
+  lstatSync(resultsDirectory).isSymbolicLink()
 ) {
-  throw new Error("evidence-directory must not be a symbolic link");
+  throw new Error("results-directory must not be a symbolic link");
 }
-rmSync(evidenceDirectory, { recursive: true, force: true });
+rmSync(resultsDirectory, { recursive: true, force: true });
 
-const stagingDirectory = resolve(evidenceDirectory, ".merge-input");
+const stagingDirectory = resolve(resultsDirectory, ".merge-input");
 const blobDirectory = resolve(stagingDirectory, "blob-report");
 const ctrfDirectory = resolve(stagingDirectory, "ctrf");
-const statusDirectory = resolve(evidenceDirectory, "shard-status");
-const htmlDirectory = resolve(evidenceDirectory, "playwright-report");
+const statusDirectory = resolve(resultsDirectory, "shard-status");
+const htmlDirectory = resolve(resultsDirectory, "playwright-report");
 mkdirSync(blobDirectory, { recursive: true });
 mkdirSync(ctrfDirectory, { recursive: true });
 mkdirSync(statusDirectory, { recursive: true });
@@ -200,7 +200,7 @@ const appendOutput = (name, value) => {
   writeFileSync(outputFile, `${name}=${escaped}\n`, { flag: "a" });
 };
 
-appendOutput("evidence-directory", evidenceDirectory);
+appendOutput("results-directory", resultsDirectory);
 appendOutput("blob-directory", blobDirectory);
 appendOutput("html-directory", htmlDirectory);
 appendOutput("can-merge", errors.length === 0 ? "true" : "false");

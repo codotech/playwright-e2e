@@ -1,20 +1,20 @@
-name: Publish E2E Evidence
-description: Finalize, publish, summarize, and enforce the authoritative E2E verdict.
+name: Publish E2E Results
+description: Finalize, publish, summarize, and enforce the final E2E result.
 
 inputs:
-  evidence-directory:
-    description: Repository-relative directory containing merged E2E evidence.
+  results-directory:
+    description: Repository-relative directory containing merged E2E results.
     required: false
-    default: e2e-evidence
+    default: e2e-results
   expected-shards:
     description: Number of shard results required by the run.
     required: true
   artifact-name:
-    description: Name of the durable merged evidence artifact.
+    description: Name of the durable merged results artifact.
     required: false
-    default: e2e-evidence
+    default: e2e-results
   retention-days:
-    description: Number of days GitHub retains the merged evidence artifact.
+    description: Number of days GitHub retains the merged results artifact.
     required: false
     default: "10"
   runner-download-outcome:
@@ -27,21 +27,21 @@ inputs:
     description: Outcome of verifying the loaded runner image ID.
     required: true
   shard-download-outcome:
-    description: Outcome of downloading shard evidence.
+    description: Outcome of downloading shard results.
     required: true
   merge-outcome:
-    description: Outcome of deterministic evidence assembly.
+    description: Outcome of deterministic results assembly.
     required: true
   report-publication-outcome:
     description: Outcome of building and publishing the report image archive.
     required: true
 
 outputs:
-  verdict:
-    description: "Authoritative verdict: passed, failed, or infrastructure-error."
-    value: ${{ steps.evaluate.outputs.verdict }}
+  result:
+    description: "Final result: passed, failed, or infrastructure-error."
+    value: ${{ steps.evaluate.outputs.result }}
   artifact-name:
-    description: Merged evidence artifact name.
+    description: Merged results artifact name.
     value: ${{ inputs.artifact-name }}
   total:
     description: Aggregated test count.
@@ -55,18 +55,18 @@ outputs:
   skipped:
     description: Aggregated skipped test count.
     value: ${{ steps.evaluate.outputs.skipped }}
-  verdict-file:
-    description: Absolute path to the finalized verdict.json.
-    value: ${{ steps.prepare.outputs.verdict-file }}
+  result-file:
+    description: Absolute path to the finalized result.json.
+    value: ${{ steps.prepare.outputs.result-file }}
 
 runs:
   using: composite
   steps:
     - id: prepare
-      name: Finalize authoritative verdict
+      name: Finalize final result
       shell: bash
       env:
-        E2E_EVIDENCE_DIRECTORY: ${{ inputs.evidence-directory }}
+        E2E_RESULTS_DIRECTORY: ${{ inputs.results-directory }}
         E2E_EXPECTED_SHARDS: ${{ inputs.expected-shards }}
         E2E_RUNNER_DOWNLOAD_OUTCOME: ${{ inputs.runner-download-outcome }}
         E2E_RUNNER_LOAD_OUTCOME: ${{ inputs.runner-load-outcome }}
@@ -78,7 +78,7 @@ runs:
         set -euo pipefail
         node "$GITHUB_ACTION_PATH/prepare-publication.mjs" \
           "$GITHUB_WORKSPACE" \
-          "$E2E_EVIDENCE_DIRECTORY" \
+          "$E2E_RESULTS_DIRECTORY" \
           "$E2E_EXPECTED_SHARDS" \
           "$E2E_RUNNER_DOWNLOAD_OUTCOME" \
           "$E2E_RUNNER_LOAD_OUTCOME" \
@@ -89,27 +89,27 @@ runs:
           "$GITHUB_OUTPUT"
 
     - id: publish
-      name: Upload authoritative E2E evidence
+      name: Upload final E2E results
       continue-on-error: true
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: ${{ inputs.artifact-name }}
-        path: ${{ steps.prepare.outputs.evidence-directory }}/
+        path: ${{ steps.prepare.outputs.results-directory }}/
         if-no-files-found: error
         retention-days: ${{ inputs.retention-days }}
 
     - id: evaluate
-      name: Publish summary and enforce verdict
+      name: Publish summary and enforce result
       if: always() && steps.prepare.outcome == 'success'
       shell: bash
       env:
-        E2E_VERDICT_FILE: ${{ steps.prepare.outputs.verdict-file }}
+        E2E_RESULT_FILE: ${{ steps.prepare.outputs.result-file }}
         E2E_ARTIFACT_NAME: ${{ inputs.artifact-name }}
         E2E_PUBLICATION_OUTCOME: ${{ steps.publish.outcome }}
       run: |
         set -euo pipefail
         node "$GITHUB_ACTION_PATH/evaluate-publication.mjs" \
-          "$E2E_VERDICT_FILE" \
+          "$E2E_RESULT_FILE" \
           "$E2E_ARTIFACT_NAME" \
           "${E2E_PUBLICATION_OUTCOME:-failure}" \
           "$GITHUB_STEP_SUMMARY" \
