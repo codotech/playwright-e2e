@@ -1,6 +1,6 @@
 <svg width="1200" height="560" viewBox="0 0 1200 560" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title description">
   <title id="title">Repository contract for the Playwright E2E action</title>
-  <desc id="description">The consumer repository contains a root Compose file, an e2e directory with the execution contract and tests, and the Dockerized services under test.</desc>
+  <desc id="description">The consumer owns application lifecycle and supplies a ready base URL. Only the e2e directory containing runner configuration and tests is the action's repository contract. Compose is not required or accepted by the action.</desc>
   <defs>
     <pattern id="grid" width="50" height="50" patternUnits="userSpaceOnUse">
       <path d="M 50 0 L 0 0 0 50" fill="none" stroke="#353535" stroke-width="1"/>
@@ -42,10 +42,10 @@
     <rect x="48" y="250" width="260" height="174" rx="16" fill="#333333" stroke="#424242" stroke-width="1.5"/>
     <rect x="68" y="270" width="58" height="22" rx="11" fill="#28F89A"/>
     <text x="80" y="285" class="type">ROOT</text>
-    <text x="68" y="326" class="label">Compose topology</text>
+    <text x="68" y="326" class="label">Caller lifecycle</text>
     <rect x="68" y="346" width="220" height="42" rx="9" fill="#424242"/>
-    <text x="84" y="372" class="file">compose.e2e.yml</text>
-    <text x="68" y="408" class="detail">Build, health, and service graph</text>
+    <text x="84" y="372" class="file">your workflow</text>
+    <text x="68" y="408" class="detail">Start · readiness · logs · cleanup</text>
   </g>
 
   <g filter="url(#shadow)">
@@ -77,10 +77,10 @@
     <rect x="892" y="250" width="260" height="174" rx="16" fill="#333333" stroke="#424242" stroke-width="1.5"/>
     <rect x="912" y="270" width="60" height="22" rx="11" fill="#28F89A"/>
     <text x="926" y="285" class="type">SUT</text>
-    <text x="912" y="326" class="label">System services</text>
+    <text x="912" y="326" class="label">Ready target URL</text>
     <rect x="912" y="346" width="220" height="42" rx="9" fill="#424242"/>
-    <text x="928" y="372" class="file">sut/</text>
-    <text x="912" y="408" class="detail">Example only; use real services</text>
+    <text x="928" y="372" class="file">sut.baseUrl</text>
+    <text x="912" y="408" class="detail">Local or remote; caller-managed</text>
   </g>
 
   <text x="50" y="533" class="subtitle">The directory name and manifest path stay stable; implementation details remain application-owned.</text>

@@ -1,20 +1,20 @@
 # Playwright E2E
 
-A portable GitHub Action and lightweight framework for running Playwright against a Dockerized system under test (SUT).
+A portable GitHub Action for running Playwright against an already running system under test (SUT).
 
-It keeps the application repository in control of its tests and services while providing a consistent CI engine: deterministic runner images, smart reuse, SUT lifecycle management, test filtering, Playwright reports, traces, portable artifacts, and a fail-closed result.
+Your workflow starts the application and passes its base URL. The action owns the test runner, filtering, reports, traces, portable artifacts, and a fail-closed result. It never starts, collects logs from, or stops application services.
 
-![E2E delivery flow from pull request, main, or manual trigger through runner reuse, Dockerized SUT testing, reports, and the required gate](docs/diagrams/e2e-flow.svg)
+![E2E flow: a caller-started local system or existing remote target supplies a base URL; codotech/playwright-e2e@v0 resolves the runner, runs tests, and publishes reports for the caller's gate](docs/diagrams/e2e-flow.svg)
 
 ## Start from the template
 
 The quickest path is [codotech/playwright-e2e-starter](https://github.com/codotech/playwright-e2e-starter). Create a repository from that template, replace its example SUT and tests, then adapt the profiles in `e2e/ci.yml`.
 
-The template owns repository policy: triggers, permissions, concurrency, checkout, the sticky pull-request comment, and preservation of the action result. This repository owns the portable execution engine.
+The template owns repository policy and application lifecycle: triggers, permissions, concurrency, checkout, Compose startup, service logs, cleanup, the sticky pull-request comment, and preservation of the result. This repository owns the portable test execution engine.
 
 ## Use the action
 
-Check out the caller repository first, then invoke the root action. Use major-version references for released actions:
+Check out the caller repository and make the target ready before invoking the root action. Use a major-version tag. This URL-only recipe requires a compatible release: currently `v0` points to `v0.2.0`, which still requires Compose. The [starter recipe PR](https://github.com/codotech/playwright-e2e-starter/pull/1) depends on releasing this change first:
 
 ```yaml
 permissions:
@@ -30,7 +30,7 @@ steps:
       profile: pull-request
 ```
 
-`@v0` follows the latest compatible 0.x release. Pin `@v0.2.0` instead when an exact release is required.
+Use version tags such as `@v0` or `@v1`, not commit SHAs or feature branches. Verify that the selected release line includes the URL-only contract before adopting this recipe.
 
 ### Inputs
 
@@ -64,7 +64,7 @@ The action fails at the end when tests fail or infrastructure is incomplete. A c
 
 The caller keeps these files:
 
-![Repository contract showing the root Compose file, E2E configuration and tests, and replaceable system services](docs/diagrams/repository-contract.svg)
+![Repository contract separating caller-owned application lifecycle from E2E configuration and tests](docs/diagrams/repository-contract.svg)
 
 `e2e/ci.yml` is the CI contract:
 
@@ -78,7 +78,6 @@ playwright:
   config: playwright.config.ts
 
 sut:
-  composeFile: compose.e2e.yml
   baseUrl: http://127.0.0.1:4173
 
 execution:
@@ -99,13 +98,40 @@ profiles:
 
 The root action is deliberately a single GitHub job. Playwright can still use multiple workers inside the runner container. Keep `execution.shards: 1`; repository-level job matrices can be added later by the caller without changing the portable engine.
 
-`playwright.config.ts` defines projects, browser/device settings, matching, dependencies, reporters, and runtime behavior. `e2e/ci.yml` selects what CI runs. Unknown keys, invalid paths, unsafe values, nonexistent projects, or malformed tags fail before the SUT starts.
+`playwright.config.ts` defines projects, browser/device settings, matching, dependencies, reporters, and runtime behavior. `e2e/ci.yml` selects what CI runs. Unknown keys, invalid paths, unsafe values, nonexistent projects, or malformed tags fail before tests run.
+
+### Target an existing environment
+
+Set `sut.baseUrl` to an already running local service or remote environment:
+
+```yaml
+sut:
+  baseUrl: https://staging.example.com
+```
+
+Keep the other sections of `e2e/ci.yml` unchanged. The action passes this URL as `BASE_URL` to the runner. It does not deploy, reset, or stop the target; the tests themselves may still create or change resources.
+
+The environment must already be ready and reachable from the runner. Connection failures remain test failures. Docker is required for the test runner and report image, not for managing your application. The action does not require Docker Compose.
+
+To run the same suites locally after installing their dependencies:
+
+```bash
+BASE_URL=https://staging.example.com pnpm --dir e2e test
+```
+
+No Compose commands are needed. Use only environments you are authorized to test. Do not embed credentials in the URL. Arbitrary workflow environment variables, including API tokens, are not currently forwarded into the runner container.
+
+### Migrate from action-managed Compose
+
+This is a breaking configuration change. Remove `sut.composeFile`; it is no longer accepted. Move startup and readiness checks before the action in your workflow. Collect service logs, upload them separately, and tear down your application in caller-owned steps with `if: always()`. The [starter](https://github.com/codotech/playwright-e2e-starter) demonstrates the complete Compose recipe.
+
+An existing staging environment needs none of those lifecycle steps. Only its base URL belongs in the action's contract.
 
 ## What rebuilds the runner
 
 The runner identity covers every Git-tracked or non-ignored untracked entry below `e2e/`, except `e2e/ci.yml`. Paths, file types, Unix modes, file bytes, and symlink targets all contribute.
 
-A new runner is built when tests, fixtures, dependencies, the lockfile, Playwright configuration, runner entrypoint, Dockerfile, or Docker-ignore rules change. Profiles, filters, retention, and service-only changes reuse the same runner bytes while still running the suite against the newly built SUT.
+A new runner is built when tests, fixtures, dependencies, the lockfile, Playwright configuration, runner entrypoint, Dockerfile, or Docker-ignore rules change. Profiles, filters, retention, base URL, and service-only changes reuse the same runner bytes while still running the suite against the supplied target.
 
 On an exact cache hit, the action validates the archive metadata, image reference, content hash, byte size, SHA-256, and image ID before using it. A missing, evicted, or invalid cache causes a clean rebuild.
 
@@ -115,20 +141,18 @@ The action performs one fail-closed sequence:
 
 1. Validate configuration and resolve the requested profile.
 2. Reuse or build the content-addressed Playwright runner.
-3. Build and start the SUT with Docker Compose and wait for health checks.
-4. Run the selected Playwright projects and tags.
-5. Capture results, traces, screenshots, SUT logs, and teardown logs.
-6. Tear down containers, volumes, and networks even after failure.
-7. Build the HTML report and portable report image.
-8. Upload artifacts and enforce the final result.
+3. Run the selected Playwright projects and tags against `sut.baseUrl`.
+4. Capture test results, traces, screenshots, and attachments.
+5. Build the HTML report and portable report image.
+6. Upload artifacts and enforce the final result.
 
-A Playwright failure remains the primary failure even if later log collection or cleanup also fails. Missing results, runner identity problems, unhealthy services, or publication failures produce `infrastructure-error`; they never turn a run green.
+A Playwright failure remains the primary failure if later report handling also fails. Missing results, runner identity problems, or publication failures produce `infrastructure-error`; they never turn a run green. Your workflow must separately enforce application startup and cleanup failures.
 
 ## Artifacts
 
 | Artifact | Contents |
 | --- | --- |
-| `e2e-results` | Final JSON result, CTRF report, Playwright HTML report, test attachments, SUT logs, and teardown logs |
+| `e2e-results` | Final JSON result, CTRF report, Playwright HTML report, and test attachments |
 | `e2e-runner-image` | Compressed Docker archive for the exact runner used by the run |
 | `e2e-report-image` | Compressed Docker archive serving the HTML report on port 8080 |
 
@@ -145,7 +169,7 @@ The images are workflow artifacts, not registry publications. Artifact retention
 
 ## Run this example locally
 
-Prerequisites: Docker, Node.js 22, Corepack, and pnpm 10.26.2.
+This repository's sample uses caller-managed Compose. Prerequisites: Docker with Compose, Node.js 22, Corepack, and pnpm 10.26.2.
 
 ```bash
 corepack enable
@@ -161,11 +185,21 @@ Always run the final cleanup command, including after a failed test. Run `pnpm -
 
 ## Platform support
 
-- GitHub.com hosted or self-hosted Linux runners with Docker and Docker Compose
+- GitHub.com hosted or self-hosted Linux runners with Docker
 - GitHub Actions runner 2.336.0 or newer, required for repository-relative `$/` action references
 - One checked-out application repository per job
 
 No inherited secrets are required by the action. The SUT may use repository or environment secrets supplied by its own workflow.
+
+## Test action lifecycle changes
+
+With Node.js 22 and Ruby installed, run the offline regression checks:
+
+```bash
+node --test .github/tests/*.test.mjs
+```
+
+These check the URL-only contract, rejection of removed Compose configuration, failure propagation, and URL and path validation without contacting a remote environment.
 
 ## License
 

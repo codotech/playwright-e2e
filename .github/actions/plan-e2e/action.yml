@@ -28,9 +28,6 @@ outputs:
   playwright-config:
     description: Playwright config path relative to working-directory.
     value: ${{ steps.plan.outputs.playwright-config }}
-  compose-file:
-    description: Docker Compose file relative to the repository root.
-    value: ${{ steps.plan.outputs.compose-file }}
   base-url:
     description: Ready SUT URL used by Playwright.
     value: ${{ steps.plan.outputs.base-url }}
