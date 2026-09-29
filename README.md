@@ -14,7 +14,7 @@ The template owns repository policy and application lifecycle: triggers, permiss
 
 ## Use the action
 
-Check out the caller repository and make the target ready before invoking the root action. The URL-only contract is unreleased: `v0.2.0` still requires Compose. Until a compatible release exists, use the implementation commit pinned by the [starter recipe PR](https://github.com/codotech/playwright-e2e-starter/pull/1), or the implementation branch while evaluating this change:
+Check out the caller repository and make the target ready before invoking the root action. Use a major-version tag. This URL-only recipe requires a compatible release: currently `v0` points to `v0.2.0`, which still requires Compose. The [starter recipe PR](https://github.com/codotech/playwright-e2e-starter/pull/1) depends on releasing this change first:
 
 ```yaml
 permissions:
@@ -25,12 +25,12 @@ steps:
   - uses: actions/checkout@v7
 
   - id: e2e
-    uses: codotech/playwright-e2e@fix/optional-compose-remote-sut
+    uses: codotech/playwright-e2e@v0
     with:
       profile: pull-request
 ```
 
-Pin a reviewed full commit SHA for reproducible adoption. Do not use `@v0.2.0` with this recipe.
+Use version tags such as `@v0` or `@v1`, not commit SHAs or feature branches. Verify that the selected release line includes the URL-only contract before adopting this recipe.
 
 ### Inputs
 
