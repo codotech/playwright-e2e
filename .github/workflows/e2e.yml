@@ -64,7 +64,16 @@ jobs:
         if: steps.sut.outcome == 'success'
         continue-on-error: true
         uses: $/
+        env:
+          DEMO_RUNTIME_TOKEN: synthetic-token-not-a-secret
+          DEMO_RUNTIME_MESSAGE: |-
+            hello from the workflow
+            spaces, "quotes", $dollar and = survive
+          DEMO_UNLISTED_TOKEN: must-stay-outside-the-runner
         with:
+          runtime-env: |
+            DEMO_RUNTIME_TOKEN
+            DEMO_RUNTIME_MESSAGE
           profile: >-
             ${{ github.event_name == 'pull_request' && 'pull-request' ||
             github.event_name == 'push' && 'main' || inputs.profile }}
