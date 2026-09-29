@@ -48,7 +48,8 @@ const assertRelative = (value, label) => {
 
 assertRelative(requestedWorkingDirectory, "working-directory");
 assertRelative(requestedConfig, "playwright-config");
-assertRelative(requestedComposeFile, "compose-file");
+const managesSut = requestedComposeFile !== "";
+if (managesSut) assertRelative(requestedComposeFile, "compose-file");
 assertRelative(requestedResultsDirectory, "results-directory");
 
 let baseUrl;
@@ -60,11 +61,18 @@ try {
 if (!["http:", "https:"].includes(baseUrl.protocol)) {
   fail("base-url must use HTTP or HTTPS");
 }
+if (baseUrl.username || baseUrl.password || baseUrl.hash) {
+  fail("base-url must not contain credentials or a fragment");
+}
 if (!requestedRunnerImageName || /[\s\0]/.test(requestedRunnerImageName)) {
-  fail("runner-image-name must be a non-empty Docker reference without whitespace");
+  fail(
+    "runner-image-name must be a non-empty Docker reference without whitespace",
+  );
 }
 if (!/^sha256:[a-f0-9]{64}$/.test(requestedRunnerImageId)) {
-  fail(`runner-image-id must be a sha256 image ID; received ${requestedRunnerImageId}`);
+  fail(
+    `runner-image-id must be a sha256 image ID; received ${requestedRunnerImageId}`,
+  );
 }
 const allowedStepOutcomes = new Set([
   "success",
@@ -120,14 +128,17 @@ if (!existsSync(configPath)) {
   fail(`Playwright configuration does not exist: ${requestedConfig}`);
 }
 
-const composeFile = resolve(workspacePath, requestedComposeFile);
-if (!existsSync(composeFile)) {
-  fail(`Docker Compose file does not exist: ${requestedComposeFile}`);
-}
-const resolvedComposeFile = realpathSync(composeFile);
-const relativeComposeFile = relative(workspacePath, resolvedComposeFile);
-if (relativeComposeFile.startsWith("..") || isAbsolute(relativeComposeFile)) {
-  fail("compose-file must not escape GITHUB_WORKSPACE");
+let resolvedComposeFile = "";
+if (managesSut) {
+  const composeFile = resolve(workspacePath, requestedComposeFile);
+  if (!existsSync(composeFile)) {
+    fail(`Docker Compose file does not exist: ${requestedComposeFile}`);
+  }
+  resolvedComposeFile = realpathSync(composeFile);
+  const relativeComposeFile = relative(workspacePath, resolvedComposeFile);
+  if (relativeComposeFile.startsWith("..") || isAbsolute(relativeComposeFile)) {
+    fail("compose-file must not escape GITHUB_WORKSPACE");
+  }
 }
 
 const resultsRoot = resolve(
@@ -174,7 +185,8 @@ const status = {
       verificationExitCode: null,
     },
     sut: {
-      composeFile: requestedComposeFile,
+      mode: managesSut ? "compose" : "external",
+      composeFile: managesSut ? requestedComposeFile : null,
       baseUrl: baseUrl.toString(),
       projectName: null,
       startupExitCode: null,
@@ -193,16 +205,18 @@ const status = {
 };
 writeFileSync(statusFile, `${JSON.stringify(status, null, 2)}\n`);
 
-const composeProject = [
-  "e2e",
-  process.env.GITHUB_RUN_ID ?? "local",
-  process.env.GITHUB_RUN_ATTEMPT ?? "1",
-  shardIndex,
-]
-  .join("-")
-  .toLowerCase()
-  .replaceAll(/[^a-z0-9_-]/g, "-");
-status.lifecycle.sut.projectName = composeProject;
+const composeProject = managesSut
+  ? [
+      "e2e",
+      process.env.GITHUB_RUN_ID ?? "local",
+      process.env.GITHUB_RUN_ATTEMPT ?? "1",
+      shardIndex,
+    ]
+      .join("-")
+      .toLowerCase()
+      .replaceAll(/[^a-z0-9_-]/g, "-")
+  : "";
+status.lifecycle.sut.projectName = composeProject || null;
 writeFileSync(statusFile, `${JSON.stringify(status, null, 2)}\n`);
 
 const quoteForShell = (value) => `'${value.replaceAll("'", `'"'"'`)}'`;

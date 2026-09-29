@@ -1,6 +1,6 @@
 name: Playwright E2E
 author: Codotech
-description: Run a Dockerized system under test with a portable Playwright runner and publish the test results.
+description: Test a Docker Compose or externally managed system with a portable Playwright runner and publish the results.
 
 branding:
   icon: check-circle

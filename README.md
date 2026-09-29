@@ -1,6 +1,6 @@
 # Playwright E2E
 
-A portable GitHub Action and lightweight framework for running Playwright against a Dockerized system under test (SUT).
+A portable GitHub Action and lightweight framework for running Playwright against a Docker Compose or externally managed system under test (SUT).
 
 It keeps the application repository in control of its tests and services while providing a consistent CI engine: deterministic runner images, smart reuse, SUT lifecycle management, test filtering, Playwright reports, traces, portable artifacts, and a fail-closed result.
 
@@ -101,6 +101,29 @@ The root action is deliberately a single GitHub job. Playwright can still use mu
 
 `playwright.config.ts` defines projects, browser/device settings, matching, dependencies, reporters, and runtime behavior. `e2e/ci.yml` selects what CI runs. Unknown keys, invalid paths, unsafe values, nonexistent projects, or malformed tags fail before the SUT starts.
 
+### Target an existing environment
+
+Omit `sut.composeFile` to test an already running local service or remote environment:
+
+```yaml
+sut:
+  baseUrl: https://staging.example.com
+```
+
+Keep the other sections of `e2e/ci.yml` unchanged. The action passes this URL as `BASE_URL` to the runner and skips all Compose startup, service-log collection, and teardown. It does not deploy, reset, or stop the target; the tests themselves may still create or change resources.
+
+The environment must already be ready and reachable from the runner. Connection failures remain test failures. Test reports, runner images, and result enforcement work in both modes. Docker is still required for the test runner and report image; Docker Compose is only needed when `composeFile` is present.
+
+To run the same suites locally after installing their dependencies:
+
+```bash
+BASE_URL=https://staging.example.com pnpm --dir e2e test
+```
+
+No Compose commands are needed. Use only environments you are authorized to test. Do not embed credentials in the URL. Arbitrary workflow environment variables, including API tokens, are not currently forwarded into the runner container.
+
+This support is unreleased; `v0.2.0` requires Compose. Use a release or commit containing this change before selecting URL-only mode.
+
 ## What rebuilds the runner
 
 The runner identity covers every Git-tracked or non-ignored untracked entry below `e2e/`, except `e2e/ci.yml`. Paths, file types, Unix modes, file bytes, and symlink targets all contribute.
@@ -115,10 +138,10 @@ The action performs one fail-closed sequence:
 
 1. Validate configuration and resolve the requested profile.
 2. Reuse or build the content-addressed Playwright runner.
-3. Build and start the SUT with Docker Compose and wait for health checks.
+3. If `sut.composeFile` is present, build and start the SUT and wait for Compose health checks; otherwise use the existing URL.
 4. Run the selected Playwright projects and tags.
-5. Capture results, traces, screenshots, SUT logs, and teardown logs.
-6. Tear down containers, volumes, and networks even after failure.
+5. Capture results, traces, and screenshots; collect SUT logs for Compose-managed runs.
+6. Tear down Compose-managed containers, volumes, and networks even after failure. Never tear down an external SUT.
 7. Build the HTML report and portable report image.
 8. Upload artifacts and enforce the final result.
 
@@ -161,11 +184,21 @@ Always run the final cleanup command, including after a failed test. Run `pnpm -
 
 ## Platform support
 
-- GitHub.com hosted or self-hosted Linux runners with Docker and Docker Compose
+- GitHub.com hosted or self-hosted Linux runners with Docker; Docker Compose is required only for managed SUTs
 - GitHub Actions runner 2.336.0 or newer, required for repository-relative `$/` action references
 - One checked-out application repository per job
 
 No inherited secrets are required by the action. The SUT may use repository or environment secrets supplied by its own workflow.
+
+## Test action lifecycle changes
+
+With Node.js 22 and Ruby installed, run the offline regression checks:
+
+```bash
+node --test .github/tests/*.test.mjs
+```
+
+These check both SUT modes, failure propagation, URL and path validation, and the action's lifecycle conditions without contacting a remote environment.
 
 ## License
 

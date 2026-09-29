@@ -23,10 +23,7 @@ const parseExitCode = (requestedValue, label) => {
   return value;
 };
 
-const startupExitCode = parseExitCode(
-  requestedStartupExitCode,
-  "startup",
-);
+const startupExitCode = parseExitCode(requestedStartupExitCode, "startup");
 const runnerExitCode = parseExitCode(
   requestedRunnerExitCode,
   "runner image verification",
@@ -36,12 +33,10 @@ const playwrightExitCode = parseExitCode(
   "Playwright",
 );
 const logExitCode = parseExitCode(requestedLogExitCode, "log capture");
-const teardownExitCode = parseExitCode(
-  requestedTeardownExitCode,
-  "teardown",
-);
+const teardownExitCode = parseExitCode(requestedTeardownExitCode, "teardown");
 
 const status = JSON.parse(readFileSync(statusFile, "utf8"));
+const managesSut = status.lifecycle.sut.mode !== "external";
 const finishedAt = new Date();
 const startedAt = new Date(status.startedAt);
 
@@ -76,6 +71,7 @@ if (runnerTransportSucceeded && runnerExitCode === null) {
   });
 }
 if (
+  managesSut &&
   runnerTransportSucceeded &&
   runnerExitCode === 0 &&
   startupExitCode === null
@@ -86,6 +82,7 @@ if (
     message: "Dockerized SUT startup did not report an exit code",
   });
 } else if (
+  managesSut &&
   runnerTransportSucceeded &&
   runnerExitCode === 0 &&
   startupExitCode !== 0
@@ -96,7 +93,11 @@ if (
     message: `Dockerized SUT startup exited with ${startupExitCode}`,
   });
 }
-if (runnerExitCode === 0 && startupExitCode === 0 && playwrightExitCode === null) {
+if (
+  runnerExitCode === 0 &&
+  (!managesSut || startupExitCode === 0) &&
+  playwrightExitCode === null
+) {
   failures.push({
     kind: "infrastructure",
     phase: "playwright-execution",
@@ -125,26 +126,26 @@ if (runnerExitCode === 0 && startupExitCode === 0 && playwrightExitCode === null
     message: `Playwright exited with ${playwrightExitCode}`,
   });
 }
-if (logExitCode === null) {
+if (managesSut && logExitCode === null) {
   failures.push({
     kind: "infrastructure",
     phase: "results",
     message: "Docker Compose log capture did not report an exit code",
   });
-} else if (logExitCode !== 0) {
+} else if (managesSut && logExitCode !== 0) {
   failures.push({
     kind: "infrastructure",
     phase: "results",
     message: `Docker Compose log capture exited with ${logExitCode}`,
   });
 }
-if (teardownExitCode === null) {
+if (managesSut && teardownExitCode === null) {
   failures.push({
     kind: "infrastructure",
     phase: "cleanup",
     message: "Docker Compose teardown did not report an exit code",
   });
-} else if (teardownExitCode !== 0) {
+} else if (managesSut && teardownExitCode !== 0) {
   failures.push({
     kind: "infrastructure",
     phase: "cleanup",
@@ -210,7 +211,9 @@ for (const [name, value] of [
 }
 
 if (status.primaryFailure) {
-  console.error(`${status.primaryFailure.kind}: ${status.primaryFailure.message}`);
+  console.error(
+    `${status.primaryFailure.kind}: ${status.primaryFailure.message}`,
+  );
 }
 for (const failure of status.secondaryFailures) {
   console.error(`additional ${failure.kind}: ${failure.message}`);

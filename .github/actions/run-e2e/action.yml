@@ -11,11 +11,11 @@ inputs:
     required: false
     default: playwright.config.ts
   compose-file:
-    description: Docker Compose file for the SUT, relative to the repository root.
+    description: Optional Docker Compose file for the SUT; empty targets the base URL without managing services.
     required: false
-    default: compose.e2e.yml
+    default: ""
   base-url:
-    description: Base URL exposed by the Dockerized SUT.
+    description: Base URL of the Compose-managed or externally managed SUT.
     required: false
     default: http://127.0.0.1:4173
   runner-image-name:
@@ -157,7 +157,7 @@ runs:
       id: start
       if: >-
         always() && steps.initialize.outcome == 'success' &&
-        steps.runner.outputs.exit-code == '0'
+        steps.runner.outputs.exit-code == '0' && inputs.compose-file != ''
       continue-on-error: true
       shell: bash
       env:
@@ -182,7 +182,7 @@ runs:
       if: >-
         steps.initialize.outcome == 'success' &&
         steps.runner.outputs.exit-code == '0' &&
-        steps.start.outputs.exit-code == '0'
+        (inputs.compose-file == '' || steps.start.outputs.exit-code == '0')
       continue-on-error: true
       shell: bash
       env:
@@ -245,7 +245,7 @@ runs:
 
     - name: Capture Dockerized SUT logs
       id: logs
-      if: always() && steps.initialize.outcome == 'success'
+      if: always() && steps.initialize.outcome == 'success' && inputs.compose-file != ''
       continue-on-error: true
       shell: bash
       env:
@@ -266,7 +266,7 @@ runs:
 
     - name: Tear down Dockerized SUT
       id: teardown
-      if: always() && steps.initialize.outcome == 'success'
+      if: always() && steps.initialize.outcome == 'success' && inputs.compose-file != ''
       continue-on-error: true
       shell: bash
       env:

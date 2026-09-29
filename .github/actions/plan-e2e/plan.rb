@@ -114,7 +114,7 @@ playwright_config = require_relative_path(playwright["config"], "playwright.conf
 
 sut = require_mapping(manifest["sut"], "sut")
 reject_unknown_keys(sut, %w[composeFile baseUrl], "sut")
-compose_file = require_relative_path(sut["composeFile"], "sut.composeFile")
+compose_file = sut.key?("composeFile") ? require_relative_path(sut["composeFile"], "sut.composeFile") : ""
 begin
   base_url = URI(sut["baseUrl"].to_s)
 rescue URI::InvalidURIError
@@ -163,17 +163,20 @@ fail_plan("e2e/ci.yml must live below the repository root") if working_directory
 
 dockerfile_path = working_directory_path.join(dockerfile).cleanpath
 playwright_config_path = working_directory_path.join(playwright_config).cleanpath
-compose_path = workspace.join(compose_file).cleanpath
-[
+required_paths = [
   [dockerfile_path, "runner.dockerfile"],
   [playwright_config_path, "playwright.config"],
-  [compose_path, "sut.composeFile"],
-].each do |path, label|
+]
+compose_path = workspace.join(compose_file).cleanpath unless compose_file.empty?
+required_paths << [compose_path, "sut.composeFile"] if compose_path
+required_paths.each do |path, label|
   fail_plan("#{label} does not exist: #{path}") unless path.file?
 end
 fail_plan("runner.dockerfile must remain inside the E2E directory") unless dockerfile_path.realpath.to_s.start_with?("#{working_directory_path}/")
 fail_plan("playwright.config must remain inside the E2E directory") unless playwright_config_path.realpath.to_s.start_with?("#{working_directory_path}/")
-fail_plan("sut.composeFile must remain inside the repository") unless compose_path.realpath.to_s.start_with?("#{workspace}/")
+if compose_path && !compose_path.realpath.to_s.start_with?("#{workspace}/")
+  fail_plan("sut.composeFile must remain inside the repository")
+end
 
 files_output, files_error, files_status = Open3.capture3(
   "git",
