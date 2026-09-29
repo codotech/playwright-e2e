@@ -10,14 +10,9 @@ inputs:
     description: Path to the Playwright configuration, relative to working-directory.
     required: false
     default: playwright.config.ts
-  compose-file:
-    description: Optional Docker Compose file for the SUT; empty targets the base URL without managing services.
-    required: false
-    default: ""
   base-url:
-    description: Base URL of the Compose-managed or externally managed SUT.
-    required: false
-    default: http://127.0.0.1:4173
+    description: HTTP or HTTPS base URL of the ready, caller-managed SUT.
+    required: true
   runner-image-name:
     description: Exact local Docker image reference loaded from the runner artifact.
     required: true
@@ -58,7 +53,7 @@ outputs:
     description: "Shard result: passed, failed, or infrastructure-error."
     value: ${{ steps.finalize.outputs.result }}
   exit-code:
-    description: Effective shard exit code after SUT, Playwright, results, and cleanup checks.
+    description: Effective shard exit code after runner verification and Playwright execution.
     value: ${{ steps.finalize.outputs.exit-code }}
   shard-directory:
     description: Absolute path containing this shard's results.
@@ -76,7 +71,6 @@ runs:
       env:
         E2E_WORKING_DIRECTORY: ${{ inputs.working-directory }}
         E2E_PLAYWRIGHT_CONFIG: ${{ inputs.playwright-config }}
-        E2E_COMPOSE_FILE: ${{ inputs.compose-file }}
         E2E_BASE_URL: ${{ inputs.base-url }}
         E2E_RUNNER_IMAGE_NAME: ${{ inputs.runner-image-name }}
         E2E_RUNNER_IMAGE_ID: ${{ inputs.runner-image-id }}
@@ -95,7 +89,6 @@ runs:
           "$GITHUB_WORKSPACE" \
           "$E2E_WORKING_DIRECTORY" \
           "$E2E_PLAYWRIGHT_CONFIG" \
-          "$E2E_COMPOSE_FILE" \
           "$E2E_BASE_URL" \
           "$E2E_RUNNER_IMAGE_NAME" \
           "$E2E_RUNNER_IMAGE_ID" \
@@ -111,9 +104,7 @@ runs:
         {
           echo "working-directory=$E2E_ABSOLUTE_WORKING_DIRECTORY"
           echo "config=$E2E_CONTAINER_CONFIG"
-          echo "compose-file=$E2E_ABSOLUTE_COMPOSE_FILE"
           echo "base-url=$E2E_BASE_URL"
-          echo "compose-project=$E2E_COMPOSE_PROJECT"
           echo "runner-image-name=$E2E_RUNNER_IMAGE_NAME"
           echo "runner-image-id=$E2E_RUNNER_IMAGE_ID"
           echo "selection-file=$E2E_SELECTION_FILE"
@@ -153,36 +144,11 @@ runs:
         } >> "$GITHUB_OUTPUT"
         exit "$runner_exit_code"
 
-    - name: Start Dockerized SUT
-      id: start
-      if: >-
-        always() && steps.initialize.outcome == 'success' &&
-        steps.runner.outputs.exit-code == '0' && inputs.compose-file != ''
-      continue-on-error: true
-      shell: bash
-      env:
-        E2E_COMPOSE_FILE: ${{ steps.initialize.outputs.compose-file }}
-        E2E_COMPOSE_PROJECT: ${{ steps.initialize.outputs.compose-project }}
-        E2E_SHARD_DIRECTORY: ${{ steps.initialize.outputs.shard-directory }}
-      run: |
-        set +e
-        set -uo pipefail
-        startup_log="$E2E_SHARD_DIRECTORY/docker-compose-startup.log"
-        docker compose \
-          --file "$E2E_COMPOSE_FILE" \
-          --project-name "$E2E_COMPOSE_PROJECT" \
-          up --detach --build --wait > "$startup_log" 2>&1
-        startup_exit_code=$?
-        cat "$startup_log"
-        echo "exit-code=$startup_exit_code" >> "$GITHUB_OUTPUT"
-        exit "$startup_exit_code"
-
     - name: Run Playwright shard
       id: playwright
       if: >-
         steps.initialize.outcome == 'success' &&
-        steps.runner.outputs.exit-code == '0' &&
-        (inputs.compose-file == '' || steps.start.outputs.exit-code == '0')
+        steps.runner.outputs.exit-code == '0'
       continue-on-error: true
       shell: bash
       env:
@@ -243,48 +209,6 @@ runs:
         fi
         exit "$playwright_exit_code"
 
-    - name: Capture Dockerized SUT logs
-      id: logs
-      if: always() && steps.initialize.outcome == 'success' && inputs.compose-file != ''
-      continue-on-error: true
-      shell: bash
-      env:
-        E2E_COMPOSE_FILE: ${{ steps.initialize.outputs.compose-file }}
-        E2E_COMPOSE_PROJECT: ${{ steps.initialize.outputs.compose-project }}
-        E2E_SHARD_DIRECTORY: ${{ steps.initialize.outputs.shard-directory }}
-      run: |
-        set +e
-        service_log="$E2E_SHARD_DIRECTORY/docker-compose.log"
-        docker compose \
-          --file "$E2E_COMPOSE_FILE" \
-          --project-name "$E2E_COMPOSE_PROJECT" \
-          logs --no-color --timestamps > "$service_log" 2>&1
-        log_exit_code=$?
-        cat "$service_log"
-        echo "exit-code=$log_exit_code" >> "$GITHUB_OUTPUT"
-        exit "$log_exit_code"
-
-    - name: Tear down Dockerized SUT
-      id: teardown
-      if: always() && steps.initialize.outcome == 'success' && inputs.compose-file != ''
-      continue-on-error: true
-      shell: bash
-      env:
-        E2E_COMPOSE_FILE: ${{ steps.initialize.outputs.compose-file }}
-        E2E_COMPOSE_PROJECT: ${{ steps.initialize.outputs.compose-project }}
-        E2E_SHARD_DIRECTORY: ${{ steps.initialize.outputs.shard-directory }}
-      run: |
-        set +e
-        teardown_log="$E2E_SHARD_DIRECTORY/docker-compose-teardown.log"
-        docker compose \
-          --file "$E2E_COMPOSE_FILE" \
-          --project-name "$E2E_COMPOSE_PROJECT" \
-          down --volumes --remove-orphans > "$teardown_log" 2>&1
-        teardown_exit_code=$?
-        cat "$teardown_log"
-        echo "exit-code=$teardown_exit_code" >> "$GITHUB_OUTPUT"
-        exit "$teardown_exit_code"
-
     - name: Finalize shard results
       id: finalize
       if: always() && steps.initialize.outcome == 'success'
@@ -295,11 +219,8 @@ runs:
         E2E_RUNNER_LOAD_OUTCOME: ${{ inputs.runner-load-outcome }}
         E2E_RUNNER_EXIT_CODE: ${{ steps.runner.outputs.exit-code }}
         E2E_ACTUAL_RUNNER_IMAGE_ID: ${{ steps.runner.outputs.actual-image-id }}
-        E2E_STARTUP_EXIT_CODE: ${{ steps.start.outputs.exit-code }}
         E2E_PLAYWRIGHT_EXIT_CODE: ${{ steps.playwright.outputs.exit-code }}
         E2E_PLAYWRIGHT_FAILURE_KIND: ${{ steps.playwright.outputs.failure-kind }}
-        E2E_LOG_EXIT_CODE: ${{ steps.logs.outputs.exit-code }}
-        E2E_TEARDOWN_EXIT_CODE: ${{ steps.teardown.outputs.exit-code }}
       run: |
         set +e
         node "$GITHUB_ACTION_PATH/complete-shard.mjs" \
@@ -308,11 +229,8 @@ runs:
           "$E2E_RUNNER_LOAD_OUTCOME" \
           "$E2E_RUNNER_EXIT_CODE" \
           "$E2E_ACTUAL_RUNNER_IMAGE_ID" \
-          "$E2E_STARTUP_EXIT_CODE" \
           "$E2E_PLAYWRIGHT_EXIT_CODE" \
           "$E2E_PLAYWRIGHT_FAILURE_KIND" \
-          "$E2E_LOG_EXIT_CODE" \
-          "$E2E_TEARDOWN_EXIT_CODE" \
           "$GITHUB_OUTPUT"
         completion_exit_code=$?
         exit "$completion_exit_code"

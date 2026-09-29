@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  sut-lifecycle:
+  url-only-runner:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -17,5 +17,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Verify external and Compose SUT lifecycles
+      - name: Verify URL-only planning and runner results
         run: node --test .github/tests/*.test.mjs

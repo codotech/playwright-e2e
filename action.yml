@@ -1,6 +1,6 @@
 name: Playwright E2E
 author: Codotech
-description: Test a Docker Compose or externally managed system with a portable Playwright runner and publish the results.
+description: Test a caller-managed system at its base URL with a portable Playwright runner and publish the results.
 
 branding:
   icon: check-circle
@@ -182,7 +182,6 @@ runs:
       with:
         working-directory: ${{ steps.plan.outputs.working-directory }}
         playwright-config: ${{ steps.plan.outputs.playwright-config }}
-        compose-file: ${{ steps.plan.outputs.compose-file }}
         base-url: ${{ steps.plan.outputs.base-url }}
         runner-image-name: ${{ steps.reuse.outputs.image-name || steps.build.outputs.image-name }}
         runner-image-id: ${{ steps.reuse.outputs.image-id || steps.build.outputs.image-id }}
