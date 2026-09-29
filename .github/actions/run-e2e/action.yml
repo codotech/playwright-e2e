@@ -166,20 +166,23 @@ runs:
         E2E_SHARD_TOTAL: ${{ inputs.shard-total }}
       run: |
         set +e
-        runtime_env_names="$(node "$GITHUB_ACTION_PATH/runtime-env.mjs")"
-        runtime_env_exit_code=$?
-        if [[ "$runtime_env_exit_code" -ne 0 ]]; then
-          echo "exit-code=$runtime_env_exit_code" >> "$GITHUB_OUTPUT"
-          echo "failure-kind=runtime-environment" >> "$GITHUB_OUTPUT"
-          exit "$runtime_env_exit_code"
-        fi
-
         runtime_env_args=()
         while IFS= read -r name; do
-          if [[ -n "$name" ]]; then
-            runtime_env_args+=(--env "$name")
+          name="${name#"${name%%[![:space:]]*}"}"
+          name="${name%"${name##*[![:space:]]}"}"
+          [[ -z "$name" ]] && continue
+          if [[ ! "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] ||
+            [[ "$name" =~ ^(BASE_URL|CI|HOME|PATH|NODE_OPTIONS|NODE_PATH|BASH_ENV|ENV)$ ]] ||
+            [[ "$name" =~ ^(E2E_|PLAYWRIGHT_|CTRF_|GITHUB_|RUNNER_|INPUT_|DOCKER_|LD_|DYLD_) ]] ||
+            [[ -z "${!name:-}" ]]; then
+            echo "::error::runtime-env requires non-reserved variable names with non-empty values; never pass assignments."
+            echo "exit-code=1" >> "$GITHUB_OUTPUT"
+            echo "failure-kind=runtime-environment" >> "$GITHUB_OUTPUT"
+            exit 1
           fi
-        done <<< "$runtime_env_names"
+          [[ " ${runtime_env_args[*]} " == *" --env $name "* ]] && continue
+          runtime_env_args+=(--env "$name")
+        done <<< "$E2E_RUNTIME_ENV"
 
         selection_args_file="$E2E_SHARD_DIRECTORY/.playwright-selection-args"
         node "$GITHUB_ACTION_PATH/playwright-selection.mjs" \
