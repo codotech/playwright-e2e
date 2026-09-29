@@ -9,6 +9,40 @@ interface EchoResponse {
 }
 
 test(
+  "echoes forwarded runtime values without exposing unlisted workflow variables",
+  { tag: ["@smoke", "@regression"] },
+  async ({ request }): Promise<void> => {
+    const requestBody =
+      await test.step("Arrange: Read runtime values inside the test container", () => ({
+        token: process.env.DEMO_RUNTIME_TOKEN ?? null,
+        message: process.env.DEMO_RUNTIME_MESSAGE ?? null,
+        unlisted: process.env.DEMO_UNLISTED_TOKEN ?? null,
+      }));
+
+    const response =
+      await test.step("Act: Send the runtime values to the echo server", () =>
+        request.post("/echo", { data: requestBody }));
+
+    await test.step("Assert: The server echoes both forwarded values and no unlisted value", async () => {
+      expect(response.status(), "The echo request should succeed").toBe(200);
+      await expect(
+        response.json(),
+        "Only allowlisted runtime values should reach the test container",
+      ).resolves.toMatchObject({
+        method: "POST",
+        path: "/echo",
+        body: {
+          token: "synthetic-token-not-a-secret",
+          message:
+            'hello from the workflow\nspaces, "quotes", $dollar and = survive',
+          unlisted: null,
+        },
+      });
+    });
+  },
+);
+
+test(
   "reports that the SUT is healthy",
   { tag: "@smoke" },
   async ({ request }): Promise<void> => {

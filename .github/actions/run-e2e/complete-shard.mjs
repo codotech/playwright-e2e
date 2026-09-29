@@ -83,11 +83,15 @@ if (
     phase:
       requestedPlaywrightFailureKind === "selection"
         ? "playwright-selection"
-        : "runner-container",
+        : requestedPlaywrightFailureKind === "runtime-environment"
+          ? "runtime-environment"
+          : "runner-container",
     message:
       requestedPlaywrightFailureKind === "selection"
         ? `Playwright selection preparation exited with ${playwrightExitCode}`
-        : `E2E runner container exited with ${playwrightExitCode}`,
+        : requestedPlaywrightFailureKind === "runtime-environment"
+          ? "Runtime environment validation failed; the test container was not started"
+          : `E2E runner container exited with ${playwrightExitCode}`,
   });
 } else if (playwrightExitCode !== null && playwrightExitCode > 0) {
   failures.push({
@@ -114,6 +118,7 @@ const exitCodeForFailure = (failure) => {
   switch (failure?.phase) {
     case "playwright":
     case "playwright-selection":
+    case "runtime-environment":
     case "runner-container":
       return playwrightExitCode ?? 1;
     case "runner-image":
@@ -128,7 +133,9 @@ status.lifecycle.runner.verificationExitCode = runnerExitCode;
 status.lifecycle.runner.actualImageId = actualRunnerImageId || null;
 status.lifecycle.playwright = {
   exitCode: playwrightExitCode,
-  started: playwrightExitCode !== null,
+  started:
+    playwrightExitCode !== null &&
+    requestedPlaywrightFailureKind !== "runtime-environment",
 };
 status.finishedAt = finishedAt.toISOString();
 status.durationMs = Math.max(0, finishedAt.getTime() - startedAt.getTime());
