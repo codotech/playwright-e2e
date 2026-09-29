@@ -124,7 +124,7 @@ No Compose commands are needed. Use only environments you are authorized to test
 
 ### Pass runtime credentials to tests
 
-`runtime-env` is unreleased. Wait for a release containing this input under your selected major-version tag before using this example; do not substitute a commit SHA or feature branch.
+`runtime-env` requires `v0.4.0` or later. Use a major-version tag such as `@v0` that includes this release; do not substitute a commit SHA or feature branch.
 
 Provide secret values through the action step's `env` and list only variable names in `runtime-env`:
 
