@@ -4,7 +4,7 @@ A portable GitHub Action for running Playwright against an already running syste
 
 Your workflow starts the application and passes its base URL. The action owns the test runner, filtering, reports, traces, portable artifacts, and a fail-closed result. It never starts, collects logs from, or stops application services.
 
-![E2E flow through runner reuse, testing a caller-provided URL, reports, and the required gate](docs/diagrams/e2e-flow.svg)
+![E2E flow: a caller-started local system or existing remote target supplies a base URL; codotech/playwright-e2e@v0 resolves the runner, runs tests, and publishes reports for the caller's gate](docs/diagrams/e2e-flow.svg)
 
 ## Start from the template
 
