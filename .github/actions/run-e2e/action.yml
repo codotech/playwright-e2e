@@ -47,6 +47,10 @@ inputs:
     description: Results path relative to working-directory.
     required: false
     default: test-results
+  runtime-env:
+    description: Optional newline-delimited names of non-empty workflow environment variables to forward only to the test container. Never pass values here.
+    required: false
+    default: ""
 
 outputs:
   result:
@@ -157,10 +161,26 @@ runs:
         E2E_RUNNER_IMAGE_ID: ${{ steps.runner.outputs.actual-image-id }}
         E2E_SHARD_DIRECTORY: ${{ steps.initialize.outputs.shard-directory }}
         E2E_SELECTION_FILE: ${{ steps.initialize.outputs.selection-file }}
+        E2E_RUNTIME_ENV: ${{ inputs.runtime-env }}
         E2E_SHARD_INDEX: ${{ inputs.shard-index }}
         E2E_SHARD_TOTAL: ${{ inputs.shard-total }}
       run: |
         set +e
+        runtime_env_names="$(node "$GITHUB_ACTION_PATH/runtime-env.mjs")"
+        runtime_env_exit_code=$?
+        if [[ "$runtime_env_exit_code" -ne 0 ]]; then
+          echo "exit-code=$runtime_env_exit_code" >> "$GITHUB_OUTPUT"
+          echo "failure-kind=runtime-environment" >> "$GITHUB_OUTPUT"
+          exit "$runtime_env_exit_code"
+        fi
+
+        runtime_env_args=()
+        while IFS= read -r name; do
+          if [[ -n "$name" ]]; then
+            runtime_env_args+=(--env "$name")
+          fi
+        done <<< "$runtime_env_names"
+
         selection_args_file="$E2E_SHARD_DIRECTORY/.playwright-selection-args"
         node "$GITHUB_ACTION_PATH/playwright-selection.mjs" \
           emit-args "$E2E_SELECTION_FILE" > "$selection_args_file"
@@ -193,6 +213,7 @@ runs:
             --env PLAYWRIGHT_BLOB_OUTPUT_DIR=/test-output/blob-report \
             --env PLAYWRIGHT_OUTPUT_DIR=/test-output/test-results \
             --env CTRF_OUTPUT_FILE=/test-output/ctrf/ctrf-report.json \
+            "${runtime_env_args[@]}" \
             --volume "$E2E_SHARD_DIRECTORY:/test-output" \
             "$E2E_RUNNER_IMAGE_ID" \
             --config "$E2E_CONFIG" \

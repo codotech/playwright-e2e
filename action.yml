@@ -23,6 +23,10 @@ inputs:
     description: Optional label matching override, either all or any.
     required: false
     default: ""
+  runtime-env:
+    description: Optional newline-delimited names of non-empty workflow environment variables to forward only to the test container. Never pass values here.
+    required: false
+    default: ""
 
 outputs:
   result:
@@ -193,6 +197,7 @@ runs:
         shard-index: "1"
         shard-total: "1"
         results-directory: test-results
+        runtime-env: ${{ inputs.runtime-env }}
 
     - id: merge
       name: Merge E2E results

@@ -14,7 +14,7 @@ The template owns repository policy and application lifecycle: triggers, permiss
 
 ## Use the action
 
-Check out the caller repository and make the target ready before invoking the root action. Use a major-version tag. This URL-only recipe requires a compatible release: currently `v0` points to `v0.2.0`, which still requires Compose. The [starter recipe PR](https://github.com/codotech/playwright-e2e-starter/pull/1) depends on releasing this change first:
+Check out the caller repository and make the target ready before invoking the root action. Use a major-version tag that includes the URL-only contract (introduced in `v0.3.0`):
 
 ```yaml
 permissions:
@@ -40,6 +40,7 @@ Use version tags such as `@v0` or `@v1`, not commit SHAs or feature branches. Ve
 | `projects` | empty | Optional Playwright project override, one per line |
 | `labels` | empty | Optional Playwright tag override, one per line |
 | `label-match` | empty | Optional `all` or `any` tag matching override |
+| `runtime-env` | empty | Optional environment variable names to forward to the test container, one per line; never values |
 
 Projects and tags are independent filters. Projects select configured Playwright variants. Tags select tests through Playwright's `--grep`. The action runs the intersection.
 
@@ -119,7 +120,30 @@ To run the same suites locally after installing their dependencies:
 BASE_URL=https://staging.example.com pnpm --dir e2e test
 ```
 
-No Compose commands are needed. Use only environments you are authorized to test. Do not embed credentials in the URL. Arbitrary workflow environment variables, including API tokens, are not currently forwarded into the runner container.
+No Compose commands are needed. Use only environments you are authorized to test. Do not embed credentials in the URL. Workflow environment variables are not forwarded into the runner container unless explicitly listed in `runtime-env`.
+
+### Pass runtime credentials to tests
+
+`runtime-env` is unreleased. Wait for a release containing this input under your selected major-version tag before using this example; do not substitute a commit SHA or feature branch.
+
+Provide secret values through the action step's `env` and list only variable names in `runtime-env`:
+
+```yaml
+- id: e2e
+  uses: codotech/playwright-e2e@v0
+  env:
+    STAGING_API_TOKEN: ${{ secrets.E2E_STAGING_API_KEY }}
+  with:
+    profile: pull-request
+    runtime-env: |
+      STAGING_API_TOKEN
+```
+
+Tests read `process.env.STAGING_API_TOKEN`. The action passes `--env STAGING_API_TOKEN` to Docker, without placing its value in command arguments, generated files, runner images, or cache identities. Forwarding applies only to the test container, not the build, merge, or report containers. Tests and dependencies can still expose credentials in logs or traces; the caller must protect those artifacts and run only trusted code. Fork pull requests normally cannot access secrets and must not run authenticated suites.
+
+Names must match `[A-Za-z_][A-Za-z0-9_]*`. Blank lines are ignored, surrounding whitespace is trimmed, and duplicate names are forwarded once. Every selected variable must exist and be non-empty. Invalid names, assignments such as `TOKEN=value`, missing values, and reserved names fail as `infrastructure-error` before the test container starts. Validation errors never echo the input or values.
+
+Reserved names are `BASE_URL`, `CI`, `HOME`, `PATH`, `NODE_OPTIONS`, `NODE_PATH`, `BASH_ENV`, and `ENV`. Prefixes `E2E_`, `PLAYWRIGHT_`, `CTRF_`, `GITHUB_`, `RUNNER_`, `INPUT_`, `DOCKER_`, `LD_`, and `DYLD_` are also reserved. Use an application-specific name such as `STAGING_API_TOKEN` instead. Omitting `runtime-env` preserves the default container environment.
 
 ### Migrate from action-managed Compose
 
